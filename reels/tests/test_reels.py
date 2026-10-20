@@ -195,13 +195,15 @@ class OrganizeTests(unittest.TestCase):
         targets = {m.dst.relative_to(self.library).as_posix() for m in moves}
         self.assertEqual(targets, {"2026-09-04/20260904_150352.mp4", "2026-09-05/20260905_clip_IMG.mov"})
 
-    def test_duplicate_name_and_size_goes_to_duplicates(self):
+    def test_duplicate_stays_where_it_is(self):
         import organize
 
         self.put("PRODUCT/2026-09-04/VIDEO/x.mp4", b"same")
         self.put("BTS/x.mp4", b"same")
         moves = organize.plan_organize(self.library, EXTS)
-        self.assertEqual(sum(1 for m in moves if m.dst is None), 1)
+        duplicates = [m for m in moves if m.note.startswith("중복")]
+        self.assertEqual(len(duplicates), 1)
+        self.assertEqual(duplicates[0].dst, duplicates[0].src)
 
     def test_file_already_in_place_is_not_moved(self):
         import organize
@@ -215,9 +217,9 @@ class OrganizeTests(unittest.TestCase):
 
         self.put("PRODUCT/2026-09-04/VIDEO/20260904_150352.mp4", b"a")
         moves = organize.plan_organize(self.library, EXTS)
-        organize.apply_organize(moves, self.library, self.duplicates, self.index)
+        organize.apply_organize(moves, self.index)
         self.assertTrue((self.library / "2026-09-04" / "20260904_150352.mp4").exists())
-        self.assertFalse((self.library / "PRODUCT").exists())
+        self.assertTrue((self.library / "PRODUCT").exists())  # 빈 폴더도 지우지 않는다
         log = json.loads((self.index / "move_log.json").read_text(encoding="utf-8"))
         self.assertEqual(len(log), 1)
 

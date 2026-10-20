@@ -110,20 +110,17 @@ def cmd_organize(args: argparse.Namespace) -> None:
     if not moves:
         print("LIBRARY에 영상이 없습니다.")
         return
-    in_place = sum(1 for m in moves if m.dst == m.src)
-    dups = [m for m in moves if m.dst is None]
-    print(f"LIBRARY 영상 {len(moves)}개: 이미 제자리 {in_place}개, 옮김 {len(moves) - in_place - len(dups)}개, 중복 {len(dups)}개")
-    for move in moves:
-        if move.dst == move.src:
-            continue
-        if move.dst is None:
-            print(f"  - 중복: {move.src.relative_to(layout['library'])} ({move.note})")
-        else:
-            print(f"  - {move.src.relative_to(layout['library'])} → {move.dst.parent.name}/{move.dst.name}")
+    kept = [m for m in moves if m.dst == m.src]
+    to_move = [m for m in moves if m.dst != m.src]
+    print(f"LIBRARY 영상 {len(moves)}개: 옮김 {len(to_move)}개, 그대로 둠 {len(kept)}개 (중복 포함)")
+    for move in to_move:
+        print(f"  - {move.src.relative_to(layout['library'])} → {move.dst.parent.name}/{move.dst.name}")
+    for move in kept:
+        print(f"  - 그대로 둠: {move.src.relative_to(layout['library'])} ({move.note})")
     if not args.yes:
         print("아직 아무것도 옮기지 않았습니다. 진행하려면 'organize --yes'를 실행하세요.")
         return
-    organize.apply_organize(moves, layout["library"], layout["duplicates"], layout["index"])
+    organize.apply_organize(moves, layout["index"])
 
 
 def cmd_proxy(args: argparse.Namespace) -> None:
