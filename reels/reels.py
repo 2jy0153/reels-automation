@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE))
 import clip_index  # noqa: E402
 import media_info  # noqa: E402
 import assemble  # noqa: E402
+import render  # noqa: E402
 import edit_plan  # noqa: E402
 import common  # noqa: E402
 import ingest  # noqa: E402
@@ -379,6 +380,33 @@ def cmd_plan_draft(args: argparse.Namespace) -> None:
         print(f"  {item['no']:02d}번 → {target} ({item['note']})")
 
 
+def cmd_render(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    folder = layout["reels"] / args.reel_id
+    needed = {
+        "timeline": folder / "voice" / "timeline.json",
+        "plan": folder / "edit" / "plan.json",
+        "subtitles": folder / "subtitles" / f"{args.reel_id}.srt",
+    }
+    for name, path in needed.items():
+        if not path.exists():
+            raise SystemExit(f"{name} 파일이 없습니다: {path}")
+    timeline = json.loads(needed["timeline"].read_text(encoding="utf-8"))["lines"]
+    plan = assemble.load_plan(needed["plan"])
+    undecided = render.undecided_lines(plan)
+    if undecided:
+        raise SystemExit(f"영상이 정해지지 않은 문단이 있어 만들지 않았습니다: {', '.join(f'{n}번' for n in undecided)}")
+    export = folder / "export"
+    export.mkdir(parents=True, exist_ok=True)
+    out = export / f"{args.reel_id}.mp4"
+    try:
+        render.render(plan, timeline, folder / "voice", needed["subtitles"], out)
+    except RuntimeError as error:
+        raise SystemExit(str(error))
+    print(f"완성 영상 저장: {out}")
+
+
 def cmd_assemble(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
@@ -463,6 +491,10 @@ def main() -> None:
     plan_p = sub.add_parser("plan-draft", help="태그와 대본으로 편집 계획 초안 만들기")
     plan_p.add_argument("reel_id")
     plan_p.set_defaults(func=cmd_plan_draft)
+
+    render_p = sub.add_parser("render", help="편집 계획대로 완성 영상(mp4) 만들기 (자막 포함)")
+    render_p.add_argument("reel_id")
+    render_p.set_defaults(func=cmd_render)
 
     assemble_p = sub.add_parser("assemble", help="편집 계획으로 프리미어 타임라인(XML) 만들기")
     assemble_p.add_argument("reel_id")

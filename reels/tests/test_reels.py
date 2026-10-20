@@ -351,6 +351,29 @@ class EditPlanTests(unittest.TestCase):
         self.assertEqual(plan[1]["in"], 2.0)
 
 
+class RenderTests(unittest.TestCase):
+    def test_segment_is_cut_and_made_vertical(self):
+        import render as render_mod
+
+        cmd = render_mod.segment_command("/a.mp4", 1.0, 2.5, Path("out.mp4"))
+        self.assertIn("1.000", cmd)
+        self.assertIn("2.500", cmd)
+        self.assertIn(f"crop={render_mod.WIDTH}:{render_mod.HEIGHT}", " ".join(cmd))
+        self.assertIn("-an", cmd)
+
+    def test_render_refuses_undecided_lines(self):
+        import render as render_mod
+
+        plan = [{"no": 1, "clip": "/a.mp4", "in": 0}, {"no": 2, "clip": None, "in": 0}]
+        self.assertEqual(render_mod.undecided_lines(plan), [2])
+
+    def test_final_command_burns_subtitles(self):
+        import render as render_mod
+
+        cmd = " ".join(render_mod.final_command(Path("v.mp4"), Path("a.wav"), "subtitles.srt", Path("o.mp4")))
+        self.assertIn("subtitles=subtitles.srt", cmd)
+
+
 class AssembleTests(unittest.TestCase):
     TIMELINE = [
         {"no": 1, "start": 0.0, "end": 2.0, "narration": "가"},
