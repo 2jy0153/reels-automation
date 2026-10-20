@@ -15,6 +15,7 @@ TIME_RANGE = re.compile(r"(\d+)\s*~\s*(\d+)\s*초")
 SEPARATOR = re.compile(r"^:?-{3,}:?$")
 HASHTAG_LINE = re.compile(r"(#\S+\s*)+")
 PLAIN_TIME = re.compile(r"^\s*\[?\s*(\d{1,3})\s*[~\-–]\s*(\d{1,3})\s*(?:초|s)?\s*\]?\s*[:：]?\s*(.*)$")
+HORIZONTAL_RULE = re.compile(r"-{3,}|\*{3,}|_{3,}")
 SECTION = re.compile(r"^\s*#*\s*(본문|캡션|썸네일|해시태그)\s*[:：]?\s*$")
 CAPTION_LABEL = re.compile(r"^\s*(?:화면\s*)?자막\s*[:：]\s*(.*)$")
 VISUAL_LABEL = re.compile(r"^\s*화면\s*[:：]\s*(.*)$")
@@ -83,6 +84,8 @@ def _from_plain(lines: list[str], reel_id: str) -> dict:
     hashtags = []
     content = []
     for line in body:
+        if HORIZONTAL_RULE.fullmatch(line.strip()):
+            continue  # --- 같은 구분선은 대사가 아니다
         if HASHTAG_LINE.fullmatch(line.strip()) and not line.strip().startswith("# "):
             hashtags.extend(line.split())
         else:

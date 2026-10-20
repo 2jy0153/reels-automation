@@ -229,6 +229,10 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(data["lines"][0]["visual"], "옷장 앞")
         self.assertEqual(data["lines"][0]["narration"], "백팩 이야기를 시작합니다.")
 
+    def test_horizontal_rule_is_not_narration(self):
+        data = script.parse_script("첫 문단입니다.\n\n---\n\n둘째 문단입니다.", "x")
+        self.assertEqual([line["narration"] for line in data["lines"]], ["첫 문단입니다.", "둘째 문단입니다."])
+
     def test_text_before_first_marker_is_rejected(self):
         with self.assertRaises(ValueError):
             script.parse_script("앞 내용\n0~3초 뒤 내용", "x")
