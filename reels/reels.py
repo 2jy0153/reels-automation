@@ -23,6 +23,7 @@ sys.path.insert(0, str(HERE))
 
 import clip_index  # noqa: E402
 import media_info  # noqa: E402
+import assemble  # noqa: E402
 import common  # noqa: E402
 import ingest  # noqa: E402
 import organize  # noqa: E402
@@ -351,6 +352,34 @@ def cmd_orient(args: argparse.Namespace) -> None:
         print(f"  {path.name}: {' → '.join(labels) or '알 수 없음'}")
 
 
+def cmd_assemble(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    folder = layout["reels"] / args.reel_id
+    timeline_path = folder / "voice" / "timeline.json"
+    plan_path = folder / "edit" / "plan.json"
+    for required in (timeline_path, plan_path):
+        if not required.exists():
+            raise SystemExit(f"파일이 없습니다: {required}")
+    timeline = json.loads(timeline_path.read_text(encoding="utf-8"))["lines"]
+    plan = assemble.load_plan(plan_path)
+    narration = [str(folder / "voice" / f"{line['no']:02d}.mp3") for line in timeline]
+    missing = [path for path in narration if not Path(path).exists()]
+    if missing:
+        raise SystemExit(f"음성 파일이 없습니다: {missing[0]} 외 {len(missing) - 1}개")
+    clips = sorted({item["clip"] for item in plan})
+    not_found = [clip for clip in clips if not Path(clip).exists()]
+    if not_found:
+        raise SystemExit(f"영상 파일을 찾을 수 없습니다: {not_found[0]} 외 {len(not_found) - 1}개")
+    source_frames = {clip: round(voice.duration(Path(clip)) * assemble.FPS) for clip in clips}
+    xml = assemble.build_xmeml(args.reel_id, timeline, plan, narration, source_frames)
+    out = folder / "project" / f"{args.reel_id}.xml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(xml, encoding="utf-8")
+    print(f"프리미어 타임라인 저장: {out}")
+    print("프리미어에서 File > Import로 가져온 뒤, 자막은 SRT를 따로 가져오세요.")
+
+
 def cmd_check(args: argparse.Namespace) -> None:
     config = common.load_config()
     reply = tagger.check_model(config["gemini_model"])
@@ -403,6 +432,10 @@ def main() -> None:
     split_p.add_argument("--yes", action="store_true", help="확인 후 실제로 저장")
     split_p.add_argument("--force", action="store_true", help="raw 폴더의 기존 음성을 덮어씀")
     split_p.set_defaults(func=cmd_split_voice)
+
+    assemble_p = sub.add_parser("assemble", help="편집 계획으로 프리미어 타임라인(XML) 만들기")
+    assemble_p.add_argument("reel_id")
+    assemble_p.set_defaults(func=cmd_assemble)
 
     srt_p = sub.add_parser("srt", help="타임라인으로 자막(SRT) 만들기")
     srt_p.add_argument("reel_id")
