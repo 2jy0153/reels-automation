@@ -22,6 +22,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import clip_index  # noqa: E402
+import media_info  # noqa: E402
 import common  # noqa: E402
 import ingest  # noqa: E402
 import organize  # noqa: E402
@@ -192,7 +193,8 @@ def cmd_log(args: argparse.Namespace) -> None:
             path = library_file
         try:
             tags = tagger.analyze_video(path, model=config["gemini_model"])
-            record = {"file": str(library_file), "status": "tagged", **tags}
+            record = {"file": str(library_file), "status": "tagged", **tags,
+                      "orientation": media_info.orientation_of(library_file)}
             print(f"  태깅 완료: {library_file.name} / {tags['bag_type']} / {tags['person']}")
         except Exception as error:  # 실패해도 기록을 남겨 다음에 다시 시도할 수 있게 한다.
             if tagger.is_quota_error(error):
@@ -291,14 +293,20 @@ def cmd_split_voice(args: argparse.Namespace) -> None:
 
     total = voice.duration(source)
     silences = voice.detect_silences(source)
+    char_counts = [len(re.sub(r"\s", "", line["narration"])) for line in lines]
     try:
-        cuts = voice.choose_cuts(silences, len(lines))
+        cuts = voice.choose_cuts_by_text(silences, total, char_counts)
     except ValueError as error:
         raise SystemExit(str(error))
     segments = voice.segments_from_cuts(total, cuts)
     print(f"원본 {source.name}: 총 {total:.2f}초, 무음 구간 {len(silences)}개, 문단 {len(lines)}개")
-    for line, (start, end) in zip(lines, segments):
-        print(f"  {line['no']:02d}번 {start:7.2f}초 ~ {end:7.2f}초 ({end - start:.2f}초): {line['narration'][:30]}")
+    rates = [chars / (end - start) for chars, (start, end) in zip(char_counts, segments) if end > start]
+    average = sum(rates) / len(rates) if rates else 0
+    for line, chars, (start, end) in zip(lines, char_counts, segments):
+        seconds = end - start
+        rate = chars / seconds if seconds > 0 else 0
+        flag = "  <- 확인 필요" if average and abs(rate - average) / average > 0.4 else ""
+        print(f"  {line['no']:02d}번 {start:7.2f}~{end:7.2f}초 ({seconds:.2f}초, {chars}자, 초당 {rate:.1f}자){flag}: {line['narration'][:25]}")
     if not args.yes:
         print("아직 아무것도 저장하지 않았습니다. 확인 후 'split-voice <ID> --yes'를 실행하세요.")
         return
@@ -321,6 +329,26 @@ def cmd_srt(args: argparse.Namespace) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(subtitles.build_srt(timeline), encoding="utf-8")
     print(f"자막 저장: {out} ({len(timeline)}개)")
+
+
+def cmd_orient(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    videos = library_videos(layout["library"], config["video_exts"])
+    clips = clip_index.load_clips(layout["index"])
+    todo = [p for p in videos if args.force or "orientation" not in clips.get(p.stem, {})]
+    if not todo:
+        print("방향을 확인할 영상이 없습니다.")
+        return
+    print(f"방향 확인 대상 {len(todo)}개 (Gemini 사용 없음)")
+    for path in todo:
+        try:
+            labels = media_info.orientation_of(path)
+        except Exception as error:
+            print(f"  확인 실패: {path.name} / {error}")
+            continue
+        clip_index.upsert_clip(layout["index"], path.stem, {"file": str(path), "orientation": labels})
+        print(f"  {path.name}: {' → '.join(labels) or '알 수 없음'}")
 
 
 def cmd_check(args: argparse.Namespace) -> None:
@@ -379,6 +407,10 @@ def main() -> None:
     srt_p = sub.add_parser("srt", help="타임라인으로 자막(SRT) 만들기")
     srt_p.add_argument("reel_id")
     srt_p.set_defaults(func=cmd_srt)
+
+    orient_p = sub.add_parser("orient", help="영상 방향(세로/가로) 태그 달기 (Gemini 미사용)")
+    orient_p.add_argument("--force", action="store_true", help="이미 확인한 영상도 다시 확인")
+    orient_p.set_defaults(func=cmd_orient)
 
     sub.add_parser("check", help="Gemini 모델 확인").set_defaults(func=cmd_check)
 

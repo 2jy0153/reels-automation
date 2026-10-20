@@ -243,6 +243,42 @@ class ScriptTests(unittest.TestCase):
         self.assertTrue(errors)
 
 
+class CutByTextTests(unittest.TestCase):
+    def test_cuts_follow_character_share_not_silence_length(self):
+        import voice as voice_mod
+
+        # 문단 1은 10자, 문단 2는 30자, 문단 3은 10자 → 경계 목표는 4초와 16초.
+        # 가장 긴 무음이 아니라 목표에 가장 가까운 무음을 골라야 한다.
+        silences = [(1.0, 1.1), (5.0, 5.8), (8.0, 8.1), (16.0, 16.1)]
+        cuts = voice_mod.choose_cuts_by_text(silences, 20.0, [10, 30, 10])
+        self.assertEqual(cuts, [(5.0, 5.8), (16.0, 16.1)])
+
+    def test_too_few_silences_is_an_error(self):
+        import voice as voice_mod
+
+        with self.assertRaises(ValueError):
+            voice_mod.choose_cuts_by_text([(1.0, 1.2)], 10.0, [5, 5, 5])
+
+
+class OrientationTests(unittest.TestCase):
+    def test_portrait_landscape_and_both(self):
+        import media_info
+
+        frames = [
+            {"width": 1080, "height": 1920},
+            {"width": 1920, "height": 1080},
+            {"width": 1920, "height": 1080, "side_data_list": [{"rotation": -90}]},
+        ]
+        self.assertEqual(media_info.labels_from_frames(frames[:1]), ["세로"])
+        self.assertEqual(media_info.labels_from_frames(frames[1:2]), ["가로"])
+        self.assertEqual(media_info.labels_from_frames(frames), ["세로", "가로"])
+
+    def test_rotation_swaps_dimensions(self):
+        import media_info
+
+        self.assertEqual(media_info.orientation_label(1920, 1080, 90), "세로")
+
+
 class VoiceTests(unittest.TestCase):
     LINES = [
         {"no": 1, "target_start": 0, "target_end": 3, "narration": "첫 문장."},

@@ -112,14 +112,50 @@ def detect_silences(path: Path, noise_db: int = SILENCE_DB, min_silence: float =
     return list(zip(starts, ends))  # 끝까지 이어진 무음은 끝이 없어 제외된다
 
 
-def choose_cuts(silences: list[tuple[float, float]], count: int) -> list[tuple[float, float]]:
-    """문단 수에서 한 개 적은 수만큼, 가장 긴 무음 구간을 자를 자리로 고른다."""
-    needed = count - 1
+def cut_targets(total: float, char_counts: list[int]) -> list[float]:
+    """문단 글자 수 비율에 맞춰, 각 문단 경계가 있어야 할 시간."""
+    chars = sum(char_counts)
+    targets, cumulative = [], 0
+    for count in char_counts[:-1]:
+        cumulative += count
+        targets.append(total * cumulative / chars)
+    return targets
+
+
+def choose_cuts_by_text(silences: list[tuple[float, float]], total: float,
+                        char_counts: list[int]) -> list[tuple[float, float]]:
+    """글자 수 비율에 가장 가까운 무음 구간을 문단 수만큼 - 1 개 고른다. 순서는 지킨다."""
+    needed = len(char_counts) - 1
+    if needed == 0:
+        return []
     if len(silences) < needed:
-        raise ValueError(f"무음 구간이 {len(silences)}개뿐이라 {count}개 문단으로 나눌 수 없습니다. "
+        raise ValueError(f"무음 구간이 {len(silences)}개뿐이라 {len(char_counts)}개 문단으로 나눌 수 없습니다. "
                          "문단 사이 쉼을 늘려 다시 만들거나 자르는 자리를 직접 정해 주세요.")
-    longest = sorted(silences, key=lambda s: s[1] - s[0], reverse=True)[:needed]
-    return sorted(longest)
+    targets = cut_targets(total, char_counts)
+    mids = [(start + end) / 2 for start, end in silences]
+    m = len(silences)
+    inf = float("inf")
+    # dp[j]: 지금까지 고른 경계 수만큼 골랐고 마지막 경계가 j번 무음일 때의 최소 오차
+    dp = [abs(mids[j] - targets[0]) for j in range(m)]
+    back: list[list[int | None]] = [[None] * m]
+    for step in range(1, needed):
+        new = [inf] * m
+        pointer: list[int | None] = [None] * m
+        best, best_index = inf, None
+        for j in range(m):
+            if best < inf:
+                new[j] = best + abs(mids[j] - targets[step])
+                pointer[j] = best_index
+            if dp[j] < best:
+                best, best_index = dp[j], j
+        dp = new
+        back.append(pointer)
+    last = min(range(m), key=lambda j: dp[j])
+    chosen = [last]
+    for step in range(needed - 1, 0, -1):
+        last = back[step][last]
+        chosen.append(last)
+    return [silences[j] for j in sorted(chosen)]
 
 
 def segments_from_cuts(total: float, cuts: list[tuple[float, float]]) -> list[tuple[float, float]]:

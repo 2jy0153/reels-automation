@@ -23,7 +23,8 @@ def _write_json(path: Path, data: object) -> None:
 
 def upsert_clip(index_dir: Path, clip_id: str, record: dict) -> None:
     clips = load_clips(index_dir)
-    record = {**record, "updated_at": datetime.now().isoformat(timespec="seconds")}
+    previous = {k: v for k, v in clips.get(clip_id, {}).items() if k != "error"}
+    record = {**previous, **record, "updated_at": datetime.now().isoformat(timespec="seconds")}
     clips[clip_id] = record
     _write_json(index_dir / "clips.json", clips)
     _write_json(index_dir / "tag_index.json", build_tag_index(clips))
