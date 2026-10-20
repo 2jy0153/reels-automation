@@ -1,14 +1,13 @@
 """릴스 자동화 명령 모음. 사용법: python3 reels/reels.py <명령>
 
-  inbox                       INBOX에 있는 영상과 옮길 계획을 보여준다 (옮기지 않음)
-  ingest                      계획만 보여준다 (옮기지 않음)
-  ingest --yes                INBOX 영상을 LIBRARY/날짜 폴더로 옮기고 중복을 걸러낸다
-  organize                    LIBRARY 기존 원본을 날짜별 구조로 옮길 계획만 보여준다
-  organize --yes              위 계획대로 실제로 옮긴다
+  inbox                       INBOX 파일과 옮길 계획을 보여준다 (옮기지 않음)
+  ingest --yes                INBOX 파일을 LIBRARY의 알맞은 자리로 옮긴다 (영상/사진/기타)
+  organize                    LIBRARY 기존 파일을 옮길 계획만 보여준다 (옮기지 않음)
+  organize --yes              위 계획대로 실제로 옮긴다 (중복·빈 폴더는 건드리지 않음)
   script import <파일>         대본(.md/.txt)을 대본 JSON으로 바꾸고 검사한다
   script check <JSON 파일>     대본 JSON을 다시 검사한다
-  proxy                       LIBRARY 영상의 720p 분석용 사본을 PROXY에 만든다 (있으면 건너뜀)
-  log [--limit N]             사본(없으면 원본)을 Gemini로 분석해 태그를 저장한다 (태깅 안 된 것만)
+  proxy                       LIBRARY/VIDEO 영상의 720p 분석용 사본을 PROXY에 만든다 (있으면 건너뜀)
+  log [--limit N]             영상(사본 우선)을 Gemini로 분석해 태그를 저장한다 (태깅 안 된 것만)
   check                       Gemini 모델이 동작하는지 확인한다
 """
 
@@ -35,6 +34,17 @@ def pending_clips(videos: list[Path], clips: dict, limit: int | None) -> list[Pa
     return pending[:limit] if limit else pending
 
 
+def library_videos(library: Path, video_exts: list[str]) -> list[Path]:
+    return sorted(
+        p for p in library.rglob("*")
+        if ingest.is_file_to_handle(p) and ingest.kind(p, video_exts, []) == ingest.VIDEO
+    )
+
+
+def inbox_files(inbox: Path) -> list[Path]:
+    return sorted(p for p in inbox.iterdir() if ingest.is_file_to_handle(p))
+
+
 def print_script_report(errors: list[str], warnings: list[str]) -> None:
     for message in errors:
         print(f"  [오류] {message}")
@@ -47,34 +57,34 @@ def print_script_report(errors: list[str], warnings: list[str]) -> None:
 def cmd_inbox(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
-    files = [p for p in sorted(layout["inbox"].iterdir()) if ingest.is_video(p, config["video_exts"])]
+    files = inbox_files(layout["inbox"])
     if not files:
-        print("INBOX가 비어 있습니다. 영상을 넣은 뒤 다시 확인해 주세요.")
+        print("INBOX가 비어 있습니다. 파일을 넣은 뒤 다시 확인해 주세요.")
         return
-    plans = ingest.plan_ingest(files, layout["library"], layout["index"])
-    print(f"INBOX에 영상 {len(files)}개가 있습니다.")
+    plans = ingest.plan_ingest(files, layout["library"], layout["index"], config["video_exts"], config["photo_exts"])
+    print(f"INBOX에 파일 {len(files)}개가 있습니다.")
     for plan in plans:
         size_mb = plan.src.stat().st_size / 1_000_000
         if plan.dst is None:
             print(f"  - {plan.src.name} ({size_mb:.1f} MB) → 중복: DUPLICATES로 이동 ({plan.note})")
         else:
-            print(f"  - {plan.src.name} ({size_mb:.1f} MB) → LIBRARY/{plan.dst.parent.name}/{plan.dst.name}")
+            print(f"  - {plan.src.name} ({size_mb:.1f} MB) → LIBRARY/{plan.dst.relative_to(layout['library'])}")
     print("정리를 시작하려면 'ingest --yes'를 실행하세요.")
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
-    files = [p for p in sorted(layout["inbox"].iterdir()) if ingest.is_video(p, config["video_exts"])]
+    files = inbox_files(layout["inbox"])
     if not files:
         print("INBOX가 비어 있습니다.")
         return
-    plans = ingest.plan_ingest(files, layout["library"], layout["index"])
+    plans = ingest.plan_ingest(files, layout["library"], layout["index"], config["video_exts"], config["photo_exts"])
     if not args.yes:
         print(f"아직 아무것도 옮기지 않았습니다. 대상 {len(plans)}개. 시작하려면 'ingest --yes'를 실행하세요.")
         return
     print(f"정리를 시작합니다. 대상 {len(plans)}개")
-    ingest.run_plan(plans, layout["duplicates"], layout["index"])
+    ingest.run_plan(plans, layout["duplicates"], layout["index"], layout["library"])
     print("정리가 끝났습니다.")
 
 
@@ -106,15 +116,15 @@ def cmd_script_check(args: argparse.Namespace) -> None:
 def cmd_organize(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
-    moves = organize.plan_organize(layout["library"], config["video_exts"])
+    moves = organize.plan_organize(layout["library"], config["video_exts"], config["photo_exts"])
     if not moves:
-        print("LIBRARY에 영상이 없습니다.")
+        print("LIBRARY에 파일이 없습니다.")
         return
     kept = [m for m in moves if m.dst == m.src]
     to_move = [m for m in moves if m.dst != m.src]
-    print(f"LIBRARY 영상 {len(moves)}개: 옮김 {len(to_move)}개, 그대로 둠 {len(kept)}개 (중복 포함)")
+    print(f"LIBRARY 파일 {len(moves)}개: 옮김 {len(to_move)}개, 그대로 둠 {len(kept)}개 (중복 포함)")
     for move in to_move:
-        print(f"  - {move.src.relative_to(layout['library'])} → {move.dst.parent.name}/{move.dst.name}")
+        print(f"  - {move.src.relative_to(layout['library'])} → {move.dst.relative_to(layout['library'])}")
     for move in kept:
         print(f"  - 그대로 둠: {move.src.relative_to(layout['library'])} ({move.note})")
     if not args.yes:
@@ -126,7 +136,7 @@ def cmd_organize(args: argparse.Namespace) -> None:
 def cmd_proxy(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
-    videos = sorted(p for p in layout["library"].rglob("*") if ingest.is_video(p, config["video_exts"]))
+    videos = library_videos(layout["library"], config["video_exts"])
     todo = [(src, proxy.proxy_path(src, layout["library"], layout["proxy"])) for src in videos]
     todo = [(src, dst) for src, dst in todo if not dst.exists()]
     if not todo:
@@ -136,7 +146,7 @@ def cmd_proxy(args: argparse.Namespace) -> None:
     for src, dst in todo:
         try:
             proxy.make_proxy(src, dst, config["proxy_height"])
-            print(f"  사본 완료: {dst.parent.name}/{dst.name}")
+            print(f"  사본 완료: {dst.relative_to(layout['proxy'])}")
         except Exception as error:
             print(f"  사본 실패(원본 유지): {src.name} / {error}")
 
@@ -144,7 +154,7 @@ def cmd_proxy(args: argparse.Namespace) -> None:
 def cmd_log(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
-    videos = sorted(p for p in layout["library"].rglob("*") if ingest.is_video(p, config["video_exts"]))
+    videos = library_videos(layout["library"], config["video_exts"])
     clips = clip_index.load_clips(layout["index"])
     pending = pending_clips(videos, clips, args.limit)
     if not pending:
@@ -174,8 +184,6 @@ def cmd_log(args: argparse.Namespace) -> None:
 
 
 def cmd_check(args: argparse.Namespace) -> None:
-    import tagger
-
     config = common.load_config()
     reply = tagger.check_model(config["gemini_model"])
     print(f"모델 {config['gemini_model']} 응답: {reply}")
@@ -201,7 +209,7 @@ def main() -> None:
     check_p.add_argument("file")
     check_p.set_defaults(func=cmd_script_check)
 
-    organize_p = sub.add_parser("organize", help="LIBRARY 기존 원본을 날짜별 구조로 정리")
+    organize_p = sub.add_parser("organize", help="LIBRARY 기존 파일을 종류·날짜별 구조로 정리")
     organize_p.add_argument("--yes", action="store_true", help="확인 후 실제로 옮김")
     organize_p.set_defaults(func=cmd_organize)
 

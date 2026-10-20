@@ -7,17 +7,18 @@
 
 ```
 SOURCE_LIBRARY/
-  INBOX/                     새 영상을 넣는 곳 (정리되면 비워짐)
-  LIBRARY/YYYY-MM-DD/        원본 전부. 날짜별 한 단계, 수정·삭제 금지
-  PROXY/YYYY-MM-DD/          분석·편집용 720p 사본 (원본과 같은 이름)
-  DUPLICATES/                중복으로 빠진 파일. 확인 후 직접 지움
-  CLIP_INDEX/                태그 정보(clips.json), 태그별 목록(tag_index.json),
-                             기록(ingest_log.json, move_log.json)
-  REELS/<릴스 ID>/           릴스 1편 = 폴더 1개
-      script/ voice/ subtitles/ graded/ project/ export/ thumbnail/
+  INBOX/                       새 파일을 넣는 곳 (정리되면 비워짐)
+  LIBRARY/
+    VIDEO/YYYY-MM-DD/          영상 원본 (날짜별)
+    PHOTO/YYYY-MM-DD/          사진 원본 (날짜별)
+    _UNSORTED/                 영상도 사진도 아닌 파일 (날짜 분류 없이 한 폴더)
+  PROXY/VIDEO/YYYY-MM-DD/      분석·편집용 720p 사본 (원본과 같은 이름)
+  DUPLICATES/                  INBOX에서 중복으로 빠진 파일 (확인 후 직접 지움)
+  CLIP_INDEX/                  태그 정보, 기록(ingest_log.json, move_log.json)
+  REELS/<릴스 ID>/             릴스 1편 = 폴더 1개
 ```
 
-주제(BTS, 제품, 장소 등)로 폴더를 나누지 않습니다. 한 파일이 여러 주제에 속할 수 있어서, 폴더 대신 **태그**로 찾습니다.
+원본은 수정·삭제하지 않습니다. 주제(BTS, 제품, 장소 등)로 폴더를 나누지 않고, 한 파일이 여러 주제에 속할 수 있어서 **태그**로 찾습니다.
 
 ## 파일 이름 규칙
 

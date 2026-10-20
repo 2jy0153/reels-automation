@@ -1,6 +1,8 @@
-"""INBOX의 영상을 LIBRARY 아래 날짜 폴더로 옮긴다.
+"""INBOX의 파일을 LIBRARY 안의 알맞은 자리로 옮긴다.
 
-- 이름: YYYYMMDD_원래이름.확장자 (시분초는 쓰지 않는다)
+- 영상 → LIBRARY/VIDEO/YYYY-MM-DD/YYYYMMDD_원래이름.확장자
+- 사진 → LIBRARY/PHOTO/YYYY-MM-DD/YYYYMMDD_원래이름.확장자
+- 둘 다 아닌 파일 → LIBRARY/_UNSORTED/원래이름 (날짜 분류 없이 한 폴더)
 - 날짜: 파일명에 YYYYMMDD가 있으면 그 날짜, 없으면 파일 수정일
 - 중복: 원본 이름과 크기가 같으면 먼저 들어온 한 개만 남기고 DUPLICATES로 뺀다
 - 원본은 복사본의 크기가 같다고 확인된 뒤에만 INBOX에서 지운다
@@ -17,6 +19,9 @@ from pathlib import Path
 DATE_PATTERN = re.compile(r"(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)")
 SEPARATORS = re.compile(r"[_\-\s]+")
 LOG_NAME = "ingest_log.json"
+VIDEO = "VIDEO"
+PHOTO = "PHOTO"
+UNSORTED = "_UNSORTED"
 
 
 @dataclass(frozen=True)
@@ -26,9 +31,18 @@ class Plan:
     note: str = ""
 
 
-def is_video(path: Path, exts: list[str]) -> bool:
+def is_file_to_handle(path: Path) -> bool:
     # macOS 메타데이터(._로 시작)와 .DS_Store는 제외한다.
-    return path.is_file() and not path.name.startswith(".") and path.suffix.lower() in exts
+    return path.is_file() and not path.name.startswith(".")
+
+
+def kind(path: Path, video_exts: list[str], photo_exts: list[str]) -> str:
+    ext = path.suffix.lower()
+    if ext in video_exts:
+        return VIDEO
+    if ext in photo_exts:
+        return PHOTO
+    return UNSORTED
 
 
 def find_name_date(stem: str) -> tuple[date, tuple[int, int]] | None:
@@ -65,6 +79,15 @@ def new_name(path: Path, when: date) -> str:
     return f"{name}{path.suffix.lower()}"
 
 
+def destination(path: Path, library: Path, video_exts: list[str], photo_exts: list[str]) -> Path:
+    """파일이 LIBRARY 안에서 가야 할 자리."""
+    file_kind = kind(path, video_exts, photo_exts)
+    if file_kind == UNSORTED:
+        return library / UNSORTED / path.name
+    when = recording_date(path)
+    return library / file_kind / f"{when:%Y-%m-%d}" / new_name(path, when)
+
+
 def unique_path(path: Path, taken: set[Path]) -> Path:
     """같은 이름이 있으면 덮어쓰지 않고 _2, _3 … 을 붙인다."""
     candidate, counter = path, 2
@@ -87,7 +110,8 @@ def save_log(index_dir: Path, entries: list[dict]) -> None:
     os.replace(temp, path)
 
 
-def plan_ingest(files: list[Path], library: Path, index_dir: Path) -> list[Plan]:
+def plan_ingest(files: list[Path], library: Path, index_dir: Path,
+                video_exts: list[str], photo_exts: list[str]) -> list[Plan]:
     seen = {(entry["original_name"], entry["size"]) for entry in load_log(index_dir)}
     taken: set[Path] = set()
     plans = []
@@ -97,8 +121,7 @@ def plan_ingest(files: list[Path], library: Path, index_dir: Path) -> list[Plan]
             plans.append(Plan(src, None, "원본 이름과 크기가 같은 파일이 이미 있음"))
             continue
         seen.add(key)
-        when = recording_date(src)
-        dst = unique_path(library / f"{when:%Y-%m-%d}" / new_name(src, when), taken)
+        dst = unique_path(destination(src, library, video_exts, photo_exts), taken)
         plans.append(Plan(src, dst))
     return plans
 
@@ -116,7 +139,7 @@ def copy_verified(src: Path, dst: Path) -> None:
         raise
 
 
-def run_plan(plans: list[Plan], duplicates: Path, index_dir: Path) -> None:
+def run_plan(plans: list[Plan], duplicates: Path, index_dir: Path, library: Path) -> None:
     log = load_log(index_dir)
     for plan in plans:
         try:
@@ -135,6 +158,6 @@ def run_plan(plans: list[Plan], duplicates: Path, index_dir: Path) -> None:
                 "ingested_at": datetime.now().isoformat(timespec="seconds"),
             })
             save_log(index_dir, log)
-            print(f"  정리 완료: {plan.src.name} → LIBRARY/{plan.dst.parent.name}/{plan.dst.name}")
+            print(f"  정리 완료: {plan.src.name} → {plan.dst.relative_to(library)}")
         except OSError as error:
             print(f"  실패(원본 유지): {plan.src.name} / {error}")

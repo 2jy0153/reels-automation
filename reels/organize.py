@@ -1,6 +1,8 @@
-"""LIBRARY 안의 기존 원본을 날짜별 구조(LIBRARY/YYYY-MM-DD/)로 정리한다.
+"""LIBRARY 안의 기존 파일을 종류·날짜별 구조로 옮긴다.
 
-- 하위 폴더(BTS, PRODUCT, VIDEO 등)를 없애고 모든 영상을 날짜 폴더 한 단계로 모은다.
+- 영상 → LIBRARY/VIDEO/YYYY-MM-DD/
+- 사진 → LIBRARY/PHOTO/YYYY-MM-DD/
+- 둘 다 아닌 파일 → LIBRARY/_UNSORTED/ (날짜 분류 없이 한 폴더, 사용자가 직접 정리)
 - 같은 이름·크기가 여러 개면 중복은 옮기지도 지우지도 않고 원래 자리에 둔다.
 - 아무 파일도 삭제하지 않는다. 빈 폴더도 지우지 않는다.
 - 같은 볼륨 안에서 이동(rename)하므로 파일 내용은 복사되지 않는다.
@@ -9,13 +11,11 @@
 
 import json
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from ingest import is_video, new_name, recording_date, unique_path
+from ingest import destination, is_file_to_handle, unique_path
 
-DATE_FOLDER = re.compile(r"\d{4}-\d{2}-\d{2}")
 MOVE_LOG = "move_log.json"
 
 
@@ -26,14 +26,16 @@ class Move:
     note: str = ""
 
 
-def _in_date_folder(path: Path, library: Path) -> bool:
-    return path.parent.parent == library and bool(DATE_FOLDER.fullmatch(path.parent.name))
+def _keeper_rank(path: Path, library: Path) -> int:
+    """이미 자리 잡힌 파일(종류/날짜/이름 구조)을 먼저 보고, 중복이 생기면 그 쪽을 남긴다."""
+    parts = path.relative_to(library).parts
+    settled = (len(parts) == 3 and parts[0] in ("VIDEO", "PHOTO")) or (len(parts) == 2 and parts[0] == "_UNSORTED")
+    return 0 if settled else 1
 
 
-def plan_organize(library: Path, exts: list[str]) -> list[Move]:
-    files = [p for p in library.rglob("*") if is_video(p, exts)]
-    # 날짜 폴더 안의 파일을 먼저 두어, 중복이 생기면 이미 제자리에 있는 쪽을 남긴다.
-    files.sort(key=lambda p: (not _in_date_folder(p, library), str(p)))
+def plan_organize(library: Path, video_exts: list[str], photo_exts: list[str]) -> list[Move]:
+    files = [p for p in library.rglob("*") if is_file_to_handle(p)]
+    files.sort(key=lambda p: (_keeper_rank(p, library), str(p)))
 
     seen: dict[tuple[str, int], Path] = {}
     taken: set[Path] = set()
@@ -45,8 +47,7 @@ def plan_organize(library: Path, exts: list[str]) -> list[Move]:
             continue
         seen[key] = src
 
-        when = recording_date(src)
-        target = library / f"{when:%Y-%m-%d}" / new_name(src, when)
+        target = destination(src, library, video_exts, photo_exts)
         if target == src:
             taken.add(target)
             moves.append(Move(src, src, "이미 제자리"))

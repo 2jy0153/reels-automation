@@ -1,10 +1,31 @@
 {
   "source_root": "/Volumes/SSD 1TB/SOURCE_LIBRARY",
-  "video_exts": [".mp4", ".mov", ".mxf", ".mts", ".m4v"],
+  "video_exts": [
+    ".mp4",
+    ".mov",
+    ".mxf",
+    ".mts",
+    ".m4v"
+  ],
   "proxy_height": 720,
   "gemini_model": "gemini-3.8-flash",
   "elevenlabs_voice_id": "",
   "pause_seconds": 0.3,
   "pause_after_question_seconds": 0.6,
-  "target_luma": 115
+  "target_luma": 115,
+  "photo_exts": [
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".heic",
+    ".heif",
+    ".tif",
+    ".tiff",
+    ".webp",
+    ".dng",
+    ".cr2",
+    ".cr3",
+    ".nef",
+    ".arw"
+  ]
 }
