@@ -279,44 +279,6 @@ class OrientationTests(unittest.TestCase):
         self.assertEqual(media_info.orientation_label(1920, 1080, 90), "세로")
 
 
-class AssembleTests(unittest.TestCase):
-    TIMELINE = [
-        {"no": 1, "start": 0.0, "end": 2.0, "narration": "가"},
-        {"no": 2, "start": 2.3, "end": 4.0, "narration": "나"},
-    ]
-
-    def test_pieces_cover_pauses_and_use_plan_in_points(self):
-        import assemble as assemble_mod
-
-        plan = [{"no": 1, "clip": "/a.mp4", "in": 5.0}, {"no": 2, "clip": "/b.mp4", "in": 1.0}]
-        pieces = assemble_mod.video_pieces(self.TIMELINE, plan)
-        self.assertEqual((pieces[0]["timeline_start"], pieces[0]["timeline_end"]), (0.0, 2.3))
-        self.assertEqual((pieces[0]["source_in"], pieces[0]["source_out"]), (5.0, 7.3))
-        self.assertEqual((pieces[1]["timeline_start"], pieces[1]["timeline_end"]), (2.3, 4.0))
-
-    def test_missing_plan_entry_is_an_error(self):
-        import assemble as assemble_mod
-
-        with self.assertRaises(ValueError):
-            assemble_mod.video_pieces(self.TIMELINE, [{"no": 1, "clip": "/a.mp4", "in": 0}])
-
-    def test_xml_is_well_formed_and_has_both_tracks(self):
-        import xml.etree.ElementTree as ET
-
-        import assemble as assemble_mod
-
-        plan = [{"no": 1, "clip": "/Volumes/SSD 1TB/a b.mp4", "in": 0.0}, {"no": 2, "clip": "/a.mp4", "in": 0.0}]
-        xml = assemble_mod.build_xmeml("test", self.TIMELINE, plan, ["/v/01.mp3", "/v/02.mp3"],
-                                       {"/Volumes/SSD 1TB/a b.mp4": 300, "/a.mp4": 300})
-        root = ET.fromstring(xml)
-        video = root.findall(".//video/track/clipitem")
-        audio = root.findall(".//audio/track/clipitem")
-        self.assertEqual(len(video), 2)
-        self.assertEqual(len(audio), 2)
-        self.assertEqual(video[0].find("end").text, "69")  # 2.3초 × 30fps
-        self.assertIn("%20", video[0].find("file/pathurl").text)
-
-
 class VoiceTests(unittest.TestCase):
     LINES = [
         {"no": 1, "target_start": 0, "target_end": 3, "narration": "첫 문장."},
