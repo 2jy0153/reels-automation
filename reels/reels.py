@@ -198,39 +198,49 @@ def cmd_voice(args: argparse.Namespace) -> None:
         raise SystemExit(f"대본 JSON이 없습니다. 먼저 'script import'를 실행하세요: {script_path}")
     data = json.loads(script_path.read_text(encoding="utf-8"))
     lines = data["lines"]
-    chars = sum(len(line["narration"]) for line in lines)
-    print(f"나레이션 대상 {len(lines)}줄, 총 {chars}자 (목소리 {config['elevenlabs_voice_id'] or '미설정'}, 배속 {config['voice_speed']})")
-    if not args.yes:
-        print("아직 아무것도 만들지 않았습니다. 진행하려면 'voice --yes'를 실행하세요.")
-        return
-    if not config["elevenlabs_voice_id"]:
-        raise SystemExit("config.json의 elevenlabs_voice_id가 비어 있습니다. 목소리 ID를 넣은 뒤 다시 실행하세요.")
-    api_key = os.environ.get("ELEVENLABS_API_KEY")
-    if not api_key:
-        raise SystemExit("reels/.env에 ELEVENLABS_API_KEY가 없습니다.")
-    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
-        raise SystemExit("ffmpeg/ffprobe가 설치되어 있지 않습니다.")
-
     voice_dir = folder / "voice"
     raw_dir = voice_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
+    missing = [line for line in lines if not (raw_dir / f"{line['no']:02d}.mp3").exists()]
+
+    if not args.yes and args.speed is None:
+        chars = sum(len(line["narration"]) for line in lines)
+        print(f"나레이션 {len(lines)}줄, 총 {chars}자. 원본 음성 있음 {len(lines) - len(missing)}개, 새로 만들 음성 {len(missing)}개")
+        print("원본 음성을 만들려면 'voice <ID> --yes', 배속을 정해 타임라인을 만들려면 'voice <ID> --speed 1.1'을 실행하세요.")
+        return
+
+    if missing:
+        if not args.yes:
+            raise SystemExit(f"원본 음성 {len(missing)}개가 없습니다. 먼저 'voice <ID> --yes'를 실행하세요.")
+        if not config["elevenlabs_voice_id"]:
+            raise SystemExit("config.json의 elevenlabs_voice_id가 비어 있습니다. 목소리 ID를 넣은 뒤 다시 실행하세요.")
+        api_key = os.environ.get("ELEVENLABS_API_KEY")
+        if not api_key:
+            raise SystemExit("reels/.env에 ELEVENLABS_API_KEY가 없습니다.")
+        for line in missing:
+            print(f"  원본 음성 생성: {line['no']}번")
+            raw_path = raw_dir / f"{line['no']:02d}.mp3"
+            raw_path.write_bytes(voice.synthesize(line["narration"], config["elevenlabs_voice_id"],
+                                                  config["elevenlabs_model"], api_key))
+
+    speed = args.speed if args.speed is not None else 1.0
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        raise SystemExit("ffmpeg/ffprobe가 설치되어 있지 않습니다.")
     durations = []
     for line in lines:
         name = f"{line['no']:02d}.mp3"
-        raw_path, final_path = raw_dir / name, voice_dir / name
-        if not raw_path.exists():
-            print(f"  음성 생성: {line['no']}번")
-            raw_path.write_bytes(voice.synthesize(line["narration"], config["elevenlabs_voice_id"],
-                                                  config["elevenlabs_model"], api_key))
-        if not final_path.exists() or args.force:
-            voice.apply_speed(raw_path, final_path, config["voice_speed"])
+        final_path = voice_dir / name
+        if args.speed is not None or not final_path.exists():
+            voice.apply_speed(raw_dir / name, final_path, speed)
         durations.append(voice.duration(final_path))
 
     timeline = voice.build_timeline(lines, durations, config["pause_seconds"], config["pause_after_question_seconds"])
-    voice.write_timeline(voice_dir, timeline)
+    voice.write_timeline(voice_dir, speed, timeline)
+    print(f"배속 {speed}로 음성을 만들었습니다. 실제 길이 기준 타임라인:")
     for item in timeline:
-        print(f"  {item['no']}번: 실제 {item['duration']}초 / 목표 {item['target_duration']}초, 다음 줄까지 쉼 {item['pause_after']}초")
-    print(f"타임라인 저장: {voice_dir / voice.TIMELINE}")
+        print(f"  {item['no']}번: {item['start']}초 ~ {item['end']}초 (길이 {item['duration']}초), 다음 줄까지 쉼 {item['pause_after']}초")
+    print(f"총 길이 약 {timeline[-1]['end']}초. 저장: {voice_dir / voice.TIMELINE}")
+    print("음성을 들어 보고 다른 배속이 필요하면 'voice <ID> --speed 값'을 다시 실행하세요.")
 
 
 def cmd_check(args: argparse.Namespace) -> None:
@@ -271,8 +281,8 @@ def main() -> None:
 
     voice_p = sub.add_parser("voice", help="대본으로 나레이션 생성 (ElevenLabs)")
     voice_p.add_argument("reel_id", help="릴스 ID (예: 2026-10-19_backpack_02)")
-    voice_p.add_argument("--yes", action="store_true", help="확인 후 실제로 생성")
-    voice_p.add_argument("--force", action="store_true", help="배속 음성을 다시 만듦 (원본 음성은 재사용)")
+    voice_p.add_argument("--yes", action="store_true", help="원본 음성을 ElevenLabs로 만듦 (없는 것만)")
+    voice_p.add_argument("--speed", type=float, help="배속을 정해 최종 음성과 타임라인을 다시 만듦 (예: 1.1)")
     voice_p.set_defaults(func=cmd_voice)
 
     sub.add_parser("check", help="Gemini 모델 확인").set_defaults(func=cmd_check)

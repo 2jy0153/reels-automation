@@ -3,7 +3,7 @@
 REELS/<ID>/voice/
   raw/NN.mp3      ElevenLabs가 만든 원본 음성
   NN.mp3          배속을 적용한 최종 음성 (줄 번호 두 자리)
-  timeline.json   줄별 길이, 쉼, 시작·끝 시간
+  timeline.json   배속과 줄별 실제 길이, 쉼, 시작·끝 시간 (음성 길이 기준)
 """
 
 import json
@@ -66,6 +66,7 @@ def pause_after(narration: str, pause: float, pause_after_question: float) -> fl
 
 
 def build_timeline(lines: list[dict], durations: list[float], pause: float, pause_after_question: float) -> list[dict]:
+    """실제 음성 길이로 타임라인을 만든다. 목표 시간은 쓰지 않는다."""
     timeline = []
     cursor = 0.0
     for index, (line, length) in enumerate(zip(lines, durations)):
@@ -76,12 +77,9 @@ def build_timeline(lines: list[dict], durations: list[float], pause: float, paus
             gap = pause_after(line["narration"], pause, pause_after_question)
         timeline.append({
             "no": line["no"],
-            "target_start": line["target_start"],
-            "target_end": line["target_end"],
             "start": start,
             "end": end,
             "duration": round(length, 3),
-            "target_duration": line["target_end"] - line["target_start"],
             "pause_after": gap,
             "narration": line["narration"],
         })
@@ -89,7 +87,8 @@ def build_timeline(lines: list[dict], durations: list[float], pause: float, paus
     return timeline
 
 
-def write_timeline(voice_dir: Path, timeline: list[dict]) -> None:
+def write_timeline(voice_dir: Path, speed: float, timeline: list[dict]) -> None:
+    payload = {"speed": speed, "lines": timeline}
     temp = voice_dir / f".{TIMELINE}.tmp"
-    temp.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(temp, voice_dir / TIMELINE)

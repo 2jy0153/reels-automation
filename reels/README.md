@@ -74,11 +74,13 @@ SOURCE_LIBRARY/
 
 ## 나레이션 (voice)
 
-- 대본 JSON의 줄마다 ElevenLabs로 음성을 만듭니다. 원본 음성은 `voice/raw/`에 저장합니다.
-- `config.json`의 `voice_speed`만큼 배속을 적용해 `voice/NN.mp3`를 만듭니다. 1.0이 원래 속도입니다.
-- 줄 사이 쉼은 `pause_seconds`(0.3초), 질문으로 끝나는 줄 뒤에는 `pause_after_question_seconds`(0.6초)입니다.
-- `voice/timeline.json`에 줄별 시작·끝 시간과 목표 시간이 기록됩니다.
-- 목소리는 `config.json`의 `elevenlabs_voice_id`에 넣어야 합니다. 비어 있으면 중단합니다.
+목표 시간에 맞추지 않습니다. 음성을 먼저 만들고, 들어 본 뒤 배속을 정합니다.
+
+1. `voice <ID> --yes`: 줄마다 원래 속도의 음성을 만들어 `voice/raw/`에 저장합니다. 이미 있는 음성은 다시 만들지 않습니다.
+2. `voice/raw/`의 음성을 듣고, `voice <ID> --speed 1.1`처럼 배속을 정합니다. 음성 API는 다시 부르지 않고 `voice/NN.mp3`와 타임라인만 만듭니다.
+3. `voice/timeline.json`에 실제 음성 길이 기준의 줄별 시작·끝 시간이 기록됩니다. 줄 사이 쉼은 `pause_seconds`(0.3초), 질문으로 끝나는 줄 뒤는 `pause_after_question_seconds`(0.6초)입니다.
+
+목소리는 `config.json`의 `elevenlabs_voice_id`에 넣어야 합니다. 비어 있으면 원본 음성 생성 단계에서 중단합니다.
 
 ## 설정
 
