@@ -29,19 +29,37 @@ def score(narration: str, record: dict, uses: int) -> float:
     return value - REUSE_PENALTY * uses
 
 
-def draft_plan(timeline: list[dict], clips: dict[str, dict], durations: dict[str, float]) -> list[dict]:
-    """clips: 파일 경로 → 태그 기록, durations: 파일 경로 → 길이(초)."""
+def placeholder(line: dict) -> dict:
+    return {"no": line["no"], "clip": None, "in": 0.0,
+            "note": f"영상 필요: {line['narration'][:20]}"}
+
+
+def draft_plan(timeline: list[dict], clips: dict[str, dict], durations: dict[str, float],
+               existing: list[dict] | None = None) -> list[dict]:
+    """clips: 파일 경로 → 태그 기록, durations: 파일 경로 → 길이(초).
+
+    existing: 이미 정한 계획. 영상이 정해진 문단은 그대로 두고, 빈 문단만 태그로 채운다.
+    태그가 없으면 빈 문단으로 두어, 나중에 수동으로 매칭할 수 있게 한다.
+    """
+    manual = {item["no"]: item for item in existing or [] if item.get("clip")}
     uses: dict[str, int] = {}
     used_until: dict[str, float] = {}
     plan = []
     for index, line in enumerate(timeline):
+        if line["no"] in manual:
+            plan.append(manual[line["no"]])
+            continue
+        if not clips:
+            plan.append(placeholder(line))
+            continue
         best_path, best_score = None, None
         for path, record in clips.items():
             value = score(line["narration"], record, uses.get(path, 0))
             if best_score is None or value > best_score:
                 best_path, best_score = path, value
         if best_path is None:
-            raise ValueError("태깅된 영상이 없어 편집 계획을 만들 수 없습니다.")
+            plan.append(placeholder(line))
+            continue
 
         piece_length = (timeline[index + 1]["start"] if index + 1 < len(timeline) else line["end"]) - line["start"]
         start_at = used_until.get(best_path, 0.0)

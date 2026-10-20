@@ -28,15 +28,21 @@ def file_url(path: str) -> str:
 
 
 def video_pieces(timeline: list[dict], plan: list[dict]) -> list[dict]:
-    """문단마다 영상 조각의 타임라인 위치와 소스 구간을 계산한다."""
+    """영상이 정해진 문단마다 영상 조각의 타임라인 위치와 소스 구간을 계산한다.
+    영상이 아직 없는 문단은 조각을 만들지 않는다."""
     by_no = {item["no"]: item for item in plan}
+    for line in timeline:
+        if line["no"] not in by_no:
+            raise ValueError(f"{line['no']}번 문단이 편집 계획에 없습니다.")
     pieces = []
     for index, line in enumerate(timeline):
-        if line["no"] not in by_no:
-            raise ValueError(f"{line['no']}번 문단에 쓸 영상이 편집 계획에 없습니다.")
         entry = by_no[line["no"]]
+        if not entry.get("clip"):
+            continue
         start = line["start"]
-        end = timeline[index + 1]["start"] if index + 1 < len(timeline) else line["end"]
+        following = timeline[index + 1] if index + 1 < len(timeline) else None
+        has_next_clip = following is not None and by_no[following["no"]].get("clip")
+        end = following["start"] if has_next_clip else line["end"]
         pieces.append({
             "no": line["no"],
             "clip": entry["clip"],
@@ -46,6 +52,13 @@ def video_pieces(timeline: list[dict], plan: list[dict]) -> list[dict]:
             "source_out": float(entry.get("in", 0.0)) + (end - start),
         })
     return pieces
+
+
+def markers_for(timeline: list[dict], plan: list[dict]) -> list[tuple[int, str]]:
+    """영상이 없는 문단마다 프리미어 마커를 찍는다."""
+    empty = {item["no"] for item in plan if not item.get("clip")}
+    return [(to_frames(line["start"]), f"{line['no']}번 문단: {line['narration'][:30]}")
+            for line in timeline if line["no"] in empty]
 
 
 def build_xmeml(name: str, timeline: list[dict], plan: list[dict], narration_files: list[str],
@@ -100,7 +113,10 @@ def build_xmeml(name: str, timeline: list[dict], plan: list[dict], narration_fil
         f"<rate><timebase>{FPS}</timebase></rate></samplecharacteristics></format>"
         f"<track>{''.join(video_items)}</track></video>"
         f"<audio><track>{''.join(audio_items)}</track></audio>"
-        "</media></sequence></xmeml>\n"
+        "</media>"
+        + "".join(f"<marker><name>{escape(text)}</name><in>{frame}</in><out>{frame}</out></marker>"
+                  for frame, text in markers_for(timeline, plan))
+        + "</sequence></xmeml>\n"
     )
 
 

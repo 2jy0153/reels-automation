@@ -317,6 +317,27 @@ class EditPlanTests(unittest.TestCase):
         plan = edit_plan.draft_plan(timeline, clips, {"/a.mp4": 30.0, "/b.mp4": 30.0})
         self.assertEqual(plan[0]["clip"], "/b.mp4")
 
+    def test_no_tags_gives_placeholders(self):
+        import edit_plan
+
+        timeline = [{"no": 1, "start": 0.0, "end": 2.0, "narration": "노트북을 펼쳐요"}]
+        plan = edit_plan.draft_plan(timeline, {}, {})
+        self.assertIsNone(plan[0]["clip"])
+        self.assertIn("영상 필요", plan[0]["note"])
+
+    def test_manual_choice_is_kept_and_empty_lines_are_filled(self):
+        import edit_plan
+
+        timeline = [
+            {"no": 1, "start": 0.0, "end": 2.0, "narration": "가나다"},
+            {"no": 2, "start": 2.0, "end": 4.0, "narration": "노트북"},
+        ]
+        existing = [{"no": 1, "clip": "/mine.mp4", "in": 3.0, "note": "직접 고름"}]
+        clips = {"/tag.mp4": {"scene": "노트북", "keywords": ["노트북"], "orientation": ["세로"]}}
+        plan = edit_plan.draft_plan(timeline, clips, {"/tag.mp4": 30.0, "/mine.mp4": 30.0}, existing)
+        self.assertEqual(plan[0]["clip"], "/mine.mp4")
+        self.assertEqual(plan[1]["clip"], "/tag.mp4")
+
     def test_reused_clip_continues_from_previous_point(self):
         import edit_plan
 
@@ -344,6 +365,19 @@ class AssembleTests(unittest.TestCase):
         self.assertEqual((pieces[0]["timeline_start"], pieces[0]["timeline_end"]), (0.0, 2.3))
         self.assertEqual((pieces[0]["source_in"], pieces[0]["source_out"]), (5.0, 7.3))
         self.assertEqual((pieces[1]["timeline_start"], pieces[1]["timeline_end"]), (2.3, 4.0))
+
+    def test_undecided_line_becomes_a_marker_and_no_clip(self):
+        import xml.etree.ElementTree as ET
+
+        import assemble as assemble_mod
+
+        plan = [{"no": 1, "clip": "/a.mp4", "in": 0.0}, {"no": 2, "clip": None, "in": 0.0}]
+        xml = assemble_mod.build_xmeml("t", self.TIMELINE, plan, ["/v/01.mp3", "/v/02.mp3"], {"/a.mp4": 300})
+        root = ET.fromstring(xml)
+        self.assertEqual(len(root.findall(".//video/track/clipitem")), 1)
+        markers = root.findall(".//marker/name")
+        self.assertEqual(len(markers), 1)
+        self.assertIn("2번 문단", markers[0].text)
 
     def test_missing_plan_entry_is_an_error(self):
         import assemble as assemble_mod
