@@ -23,8 +23,12 @@ def finals(reels_dir: Path) -> list[Path]:
     )
 
 
-def target_for(drive_dir: Path, reels_dir: Path, source: Path) -> Path:
-    return drive_dir / source.relative_to(reels_dir)
+def target_for(drive_dir: Path, source: Path) -> Path:
+    """백업 폴더 안에 하위 폴더 없이 파일만 둔다. 같은 이름이 다른 크기로 있으면 릴스 ID를 앞에 붙인다."""
+    candidate = drive_dir / source.name
+    if candidate.exists() and candidate.stat().st_size != source.stat().st_size:
+        candidate = drive_dir / f"{source.parent.parent.name}_{source.name}"
+    return candidate
 
 
 def needs_copy(source: Path, target: Path) -> bool:
@@ -36,10 +40,10 @@ def backup_once(reels_dir: Path, drive_dir: Path, index_dir: Path) -> list[Path]
     log = json.loads(log_path.read_text(encoding="utf-8")) if log_path.exists() else []
     copied = []
     for source in finals(reels_dir):
-        target = target_for(drive_dir, reels_dir, source)
+        target = target_for(drive_dir, source)
         if not needs_copy(source, target):
             continue
-        target.parent.mkdir(parents=True, exist_ok=True)
+        drive_dir.mkdir(parents=True, exist_ok=True)
         temp = target.parent / f".{target.name}.partial"
         try:
             shutil.copy2(source, temp)

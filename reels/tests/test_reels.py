@@ -429,7 +429,21 @@ class BackupTests(unittest.TestCase):
             first = backup_mod.backup_once(reels, drive, index)
             self.assertEqual(sorted(p.name for p in first), ["final.mp4", "thumb.png"])
             self.assertEqual(backup_mod.backup_once(reels, drive, index), [])
-            self.assertFalse((drive / "20261021_x" / "voice").exists())
+            self.assertEqual(sorted(p.name for p in drive.iterdir()), ["final.mp4", "thumb.png"])  # 하위 폴더 없음
+
+    def test_same_name_with_different_content_gets_reel_prefix(self):
+        import backup as backup_mod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reels = base / "REELS"
+            for reel, content in (("20261021_a", b"one"), ("20261022_b", b"twotwo")):
+                (reels / reel / "export").mkdir(parents=True)
+                (reels / reel / "export" / "thumb.png").write_bytes(content)
+            drive, index = base / "Drive", base / "CLIP_INDEX"
+            backup_mod.backup_once(reels, drive, index)
+            backup_mod.backup_once(reels, drive, index)
+            self.assertEqual(sorted(p.name for p in drive.iterdir()), ["20261022_b_thumb.png", "thumb.png"])
 
 
 class SubtitleSheetTests(unittest.TestCase):
