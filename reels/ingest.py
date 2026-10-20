@@ -1,7 +1,7 @@
 """INBOX의 파일을 LIBRARY 안의 알맞은 자리로 옮긴다.
 
-- 영상 → LIBRARY/VIDEO/YYYY-MM-DD/YYYYMMDD_원래이름.확장자
-- 사진 → LIBRARY/PHOTO/YYYY-MM-DD/YYYYMMDD_원래이름.확장자
+- 영상 → LIBRARY/VIDEO/YYYYMMDD/YYYYMMDD_원래이름.확장자
+- 사진 → LIBRARY/PHOTO/YYYYMMDD/YYYYMMDD_원래이름.확장자
 - 날짜를 못 찾은 영상·사진 → LIBRARY/_NO_DATE/원래이름 (직접 확인 후 옮김)
 - 영상도 사진도 아닌 파일 → LIBRARY/_UNSORTED/원래이름
 - 날짜 출처: 파일명의 YYYYMMDD → 메타데이터(EXIF 등, exiftool). 파일 수정일은 쓰지 않는다.
@@ -113,7 +113,7 @@ def destination(path: Path, library: Path, video_exts: list[str], photo_exts: li
     when = recording_date(path, metadata_reader)
     if when is None:
         return library / NO_DATE / path.name
-    return library / file_kind / f"{when:%Y-%m-%d}" / new_name(path, when)
+    return library / file_kind / f"{when:%Y%m%d}" / new_name(path, when)
 
 
 def unique_path(path: Path, taken: set[Path]) -> Path:

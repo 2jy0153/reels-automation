@@ -139,6 +139,23 @@ def cmd_organize(args: argparse.Namespace) -> None:
     organize.apply_organize(moves, layout["index"])
 
 
+def cmd_fix_folders(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    bases = [layout["library"] / "VIDEO", layout["library"] / "PHOTO", layout["proxy"] / "VIDEO"]
+    renames = organize.plan_folder_renames(bases)
+    if not renames:
+        print("바꿀 폴더가 없습니다.")
+        return
+    print(f"바꿀 폴더 {len(renames)}개:")
+    for old, new in renames:
+        print(f"  - {old.relative_to(layout['library'].parent)} → {new.name}")
+    if not args.yes:
+        print("아직 아무것도 바꾸지 않았습니다. 진행하려면 'fix-folders --yes'를 실행하세요.")
+        return
+    organize.apply_folder_renames(renames, layout["index"])
+
+
 def cmd_proxy(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
@@ -177,6 +194,10 @@ def cmd_log(args: argparse.Namespace) -> None:
             record = {"file": str(library_file), "status": "tagged", **tags}
             print(f"  태깅 완료: {library_file.name} / {tags['bag_type']} / {tags['person']}")
         except Exception as error:  # 실패해도 기록을 남겨 다음에 다시 시도할 수 있게 한다.
+            if tagger.is_quota_error(error):
+                print(f"  한도 도달로 멈춤: {error}")
+                print("  남은 영상은 다음에 'log'를 실행하면 이어서 처리합니다.")
+                return
             record = {
                 "file": str(library_file),
                 "status": "tag_failed",
@@ -263,7 +284,7 @@ def main() -> None:
     script_sub = script_p.add_subparsers(dest="script_command", required=True)
     import_p = script_sub.add_parser("import", help="대본 파일을 JSON으로 변환")
     import_p.add_argument("file")
-    import_p.add_argument("--id", help="릴스 ID (예: 2026-10-19_backpack_02). 없으면 파일 이름")
+    import_p.add_argument("--id", help="릴스 ID (예: 20261019_backpack_02). 없으면 파일 이름")
     import_p.set_defaults(func=cmd_script_import)
     check_p = script_sub.add_parser("check", help="대본 JSON 검사")
     check_p.add_argument("file")
@@ -275,12 +296,16 @@ def main() -> None:
 
     sub.add_parser("proxy", help="분석용 720p 사본 만들기").set_defaults(func=cmd_proxy)
 
+    fix_p = sub.add_parser("fix-folders", help="VIDEO·PHOTO·PROXY의 YYYY-MM-DD 폴더를 YYYYMMDD로 바꾸기 (한 번만)")
+    fix_p.add_argument("--yes", action="store_true", help="확인 후 실제로 바꿈")
+    fix_p.set_defaults(func=cmd_fix_folders)
+
     log_p = sub.add_parser("log", help="영상 태깅 (Gemini)")
     log_p.add_argument("--limit", type=int, help="이번에 처리할 최대 개수 (처음 시험할 때 권장: 2)")
     log_p.set_defaults(func=cmd_log)
 
     voice_p = sub.add_parser("voice", help="대본으로 나레이션 생성 (ElevenLabs)")
-    voice_p.add_argument("reel_id", help="릴스 ID (예: 2026-10-19_backpack_02)")
+    voice_p.add_argument("reel_id", help="릴스 ID (예: 20261019_backpack_02)")
     voice_p.add_argument("--yes", action="store_true", help="원본 음성을 ElevenLabs로 만듦 (없는 것만)")
     voice_p.add_argument("--speed", type=float, help="배속을 정해 최종 음성과 타임라인을 다시 만듦 (예: 1.1)")
     voice_p.set_defaults(func=cmd_voice)

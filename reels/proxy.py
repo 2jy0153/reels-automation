@@ -1,6 +1,6 @@
 """분석·편집용 저용량 사본(720p)을 만든다. 원본은 건드리지 않는다.
 
-LIBRARY/YYYY-MM-DD/이름.mp4 → PROXY/YYYY-MM-DD/이름.mp4
+LIBRARY/VIDEO/YYYYMMDD/이름.mp4 → PROXY/VIDEO/YYYYMMDD/이름.mp4
 """
 
 import os

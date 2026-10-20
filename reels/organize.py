@@ -1,7 +1,7 @@
 """LIBRARY 안의 기존 파일을 종류·날짜별 구조로 옮긴다.
 
-- 영상 → LIBRARY/VIDEO/YYYY-MM-DD/
-- 사진 → LIBRARY/PHOTO/YYYY-MM-DD/
+- 영상 → LIBRARY/VIDEO/YYYYMMDD/
+- 사진 → LIBRARY/PHOTO/YYYYMMDD/
 - 날짜를 못 찾은 영상·사진 → LIBRARY/_NO_DATE/ (직접 확인 후 옮김)
 - 영상도 사진도 아닌 파일 → LIBRARY/_UNSORTED/ (날짜 분류 없이 한 폴더)
 - 같은 이름·크기가 여러 개면 먼저 자리 잡힌 한 개만 남기고, 나머지는 DUPLICATES로 옮긴다.
@@ -12,6 +12,7 @@
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,6 +58,38 @@ def plan_organize(library: Path, duplicates: Path, video_exts: list[str], photo_
             continue
         moves.append(Move(src, unique_path(target, taken)))
     return moves
+
+
+HYPHEN_DATE_FOLDER = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def plan_folder_renames(base_dirs: list[Path]) -> list[tuple[Path, Path]]:
+    """VIDEO·PHOTO 아래의 YYYY-MM-DD 폴더를 YYYYMMDD로 바꾸는 계획."""
+    renames = []
+    for base in base_dirs:
+        if not base.is_dir():
+            continue
+        for folder in sorted(base.iterdir()):
+            if folder.is_dir() and HYPHEN_DATE_FOLDER.fullmatch(folder.name):
+                renames.append((folder, folder.with_name(folder.name.replace("-", ""))))
+    return renames
+
+
+def apply_folder_renames(renames: list[tuple[Path, Path]], index_dir: Path) -> None:
+    log_path = index_dir / MOVE_LOG
+    log = json.loads(log_path.read_text(encoding="utf-8")) if log_path.exists() else []
+    renamed = 0
+    for old, new in renames:
+        if new.exists():
+            print(f"  건너뜀(이미 있음): {new}")
+            continue
+        os.rename(old, new)
+        log.append({"from": str(old), "to": str(new), "note": "날짜 폴더 이름 변경"})
+        renamed += 1
+    temp = log_path.with_suffix(".json.tmp")
+    temp.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temp, log_path)
+    print(f"폴더 이름 변경 완료: {renamed}개")
 
 
 def apply_organize(moves: list[Move], index_dir: Path) -> None:

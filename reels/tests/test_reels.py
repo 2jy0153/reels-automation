@@ -123,8 +123,8 @@ class IngestTests(unittest.TestCase):
         photo = ingest.destination(self.make("20260904_IMG_1.heic"), self.library, VEXTS, PEXTS)
         other = ingest.destination(self.make("memo.pdf"), self.library, VEXTS, PEXTS)
         undated = ingest.destination(self.make("clip.mp4"), self.library, VEXTS, PEXTS, no_metadata)
-        self.assertEqual(video, self.library / "VIDEO" / "2026-09-04" / "20260904_150352.mp4")
-        self.assertEqual(photo, self.library / "PHOTO" / "2026-09-04" / "20260904_IMG_1.heic")
+        self.assertEqual(video, self.library / "VIDEO" / "20260904" / "20260904_150352.mp4")
+        self.assertEqual(photo, self.library / "PHOTO" / "20260904" / "20260904_IMG_1.heic")
         self.assertEqual(other, self.library / "_UNSORTED" / "memo.pdf")
         self.assertEqual(undated, self.library / "_NO_DATE" / "clip.mp4")
 
@@ -146,7 +146,7 @@ class IngestTests(unittest.TestCase):
     def test_run_moves_verified_copy_and_records_log(self):
         src = self.make("20260904_150352.mp4", b"abc")
         ingest.run_plan(self.plan([src]), self.index, self.library)
-        final = self.library / "VIDEO" / "2026-09-04" / "20260904_150352.mp4"
+        final = self.library / "VIDEO" / "20260904" / "20260904_150352.mp4"
         self.assertEqual(final.read_bytes(), b"abc")
         self.assertFalse(src.exists())
         log = ingest.load_log(self.index)
@@ -165,15 +165,15 @@ class IngestTests(unittest.TestCase):
         self.assertEqual(len(list(self.library.rglob("*.mp4"))), 1)
 
     def test_no_overwrite_when_destination_exists(self):
-        (self.library / "VIDEO" / "2026-09-04").mkdir(parents=True)
-        (self.library / "VIDEO" / "2026-09-04" / "20260904_150352.mp4").write_bytes(b"old")
+        (self.library / "VIDEO" / "20260904").mkdir(parents=True)
+        (self.library / "VIDEO" / "20260904" / "20260904_150352.mp4").write_bytes(b"old")
         src = self.make("20260904_150352.mp4", b"newer-content")
         self.assertEqual(self.plan([src])[0].dst.name, "20260904_150352_2.mp4")
 
 
 class ScriptTests(unittest.TestCase):
     def setUp(self):
-        self.data = script.parse_script(FIXTURE.read_text(encoding="utf-8"), "2026-10-19_backpack_01")
+        self.data = script.parse_script(FIXTURE.read_text(encoding="utf-8"), "20261019_backpack_01")
 
     def test_reads_every_table_row_with_times(self):
         self.assertEqual(len(self.data["lines"]), 8)
@@ -203,7 +203,7 @@ class ScriptTests(unittest.TestCase):
 
     def test_plain_text_with_time_markers(self):
         text = "# 제목\n\n0~3초 첫 문장입니다.\n자막: 큰 글씨\n3~6초 둘째 문장인가요?\n\n본문\n가방 이야기\n\n썸네일\n첫 줄\n둘째 줄\n\n#백팩 #출근"
-        data = script.parse_script(text, "2026-10-21_test_01")
+        data = script.parse_script(text, "20261021_test_01")
         self.assertEqual(len(data["lines"]), 2)
         self.assertEqual((data["lines"][1]["target_start"], data["lines"][1]["target_end"]), (3, 6))
         self.assertEqual(data["lines"][0]["caption"], "큰 글씨")
@@ -326,20 +326,20 @@ class OrganizeTests(unittest.TestCase):
         return organize.plan_organize(self.library, self.duplicates, VEXTS, PEXTS, metadata_reader)
 
     def test_videos_photos_and_others_are_routed(self):
-        self.put("PRODUCT/2026-09-04/VIDEO/20260904_150352.mp4", b"a")
+        self.put("PRODUCT/20260904/VIDEO/20260904_150352.mp4", b"a")
         self.put("BTS/clip_IMG_20260905.mov", b"b")
         self.put("CAPTURE/20260906_IMG_1.heic", b"c")
         self.put("RESEARCH/memo.pdf", b"d")
         targets = {m.dst.relative_to(self.library).as_posix() for m in self.plan()}
         self.assertEqual(targets, {
-            "VIDEO/2026-09-04/20260904_150352.mp4",
-            "VIDEO/2026-09-05/20260905_clip_IMG.mov",
-            "PHOTO/2026-09-06/20260906_IMG_1.heic",
+            "VIDEO/20260904/20260904_150352.mp4",
+            "VIDEO/20260905/20260905_clip_IMG.mov",
+            "PHOTO/20260906/20260906_IMG_1.heic",
             "_UNSORTED/memo.pdf",
         })
 
     def test_duplicate_goes_to_duplicates_folder(self):
-        self.put("PRODUCT/2026-09-04/VIDEO/x.mp4", b"same")
+        self.put("PRODUCT/20260904/VIDEO/x.mp4", b"same")
         self.put("BTS/x.mp4", b"same")
         duplicates = [m for m in self.plan() if m.note.startswith("중복")]
         self.assertEqual(len(duplicates), 1)
@@ -353,31 +353,44 @@ class OrganizeTests(unittest.TestCase):
     def test_photo_date_comes_from_metadata(self):
         self.put("BTS/IMG_0002.jpg", b"p")
         moves = self.plan(lambda p: date(2026, 8, 1))
-        self.assertEqual(moves[0].dst, self.library / "PHOTO" / "2026-08-01" / "20260801_IMG_0002.jpg")
+        self.assertEqual(moves[0].dst, self.library / "PHOTO" / "20260801" / "20260801_IMG_0002.jpg")
 
     def test_file_already_in_place_is_not_moved(self):
-        self.put("VIDEO/2026-09-04/20260904_150352.mp4")
+        self.put("VIDEO/20260904/20260904_150352.mp4")
         moves = self.plan()
         self.assertEqual(moves[0].dst, moves[0].src)
 
     def test_apply_moves_files_and_logs_them(self):
         import organize
 
-        self.put("PRODUCT/2026-09-04/VIDEO/20260904_150352.mp4", b"a")
+        self.put("PRODUCT/20260904/VIDEO/20260904_150352.mp4", b"a")
         organize.apply_organize(self.plan(), self.index)
-        self.assertTrue((self.library / "VIDEO" / "2026-09-04" / "20260904_150352.mp4").exists())
+        self.assertTrue((self.library / "VIDEO" / "20260904" / "20260904_150352.mp4").exists())
         self.assertTrue((self.library / "PRODUCT").exists())  # 빈 폴더도 지우지 않는다
         log = json.loads((self.index / "move_log.json").read_text(encoding="utf-8"))
         self.assertEqual(len(log), 1)
+
+
+class FolderRenameTests(unittest.TestCase):
+    def test_hyphen_date_folders_are_renamed_and_others_are_left(self):
+        import organize
+
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "VIDEO"
+            (video / "2026-10-20").mkdir(parents=True)
+            (video / "20261021").mkdir()
+            (video / "_NO_DATE").mkdir()
+            renames = organize.plan_folder_renames([video, Path(tmp) / "MISSING"])
+            self.assertEqual([(old.name, new.name) for old, new in renames], [("2026-10-20", "20261020")])
 
 
 class ProxyTests(unittest.TestCase):
     def test_proxy_mirrors_library_structure(self):
         import proxy as proxy_mod
 
-        src = Path("/ssd/LIBRARY/VIDEO/2026-10-20/20261020_A001.mp4")
+        src = Path("/ssd/LIBRARY/VIDEO/20261020/20261020_A001.mp4")
         dst = proxy_mod.proxy_path(src, Path("/ssd/LIBRARY"), Path("/ssd/PROXY"))
-        self.assertEqual(dst, Path("/ssd/PROXY/VIDEO/2026-10-20/20261020_A001.mp4"))
+        self.assertEqual(dst, Path("/ssd/PROXY/VIDEO/20261020/20261020_A001.mp4"))
 
     def test_ffmpeg_scales_to_height_and_keeps_aspect(self):
         import proxy as proxy_mod
@@ -388,6 +401,14 @@ class ProxyTests(unittest.TestCase):
 
 
 class TaggerTests(unittest.TestCase):
+    def test_quota_errors_are_detected(self):
+        class ApiError(Exception):
+            code = 429
+
+        self.assertTrue(tagger.is_quota_error(ApiError("busy")))
+        self.assertTrue(tagger.is_quota_error(RuntimeError("RESOURCE_EXHAUSTED: quota exceeded")))
+        self.assertFalse(tagger.is_quota_error(RuntimeError("file upload failed")))
+
     def test_valid_tags_pass_through(self):
         tags = tagger.validate_tags({"bag_type": "백팩", "person": "사람_없음", "shot": "제품_클로즈업",
                                      "scene": "백팩 측면", "keywords": ["백팩"], "confidence": 0.9})

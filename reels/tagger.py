@@ -71,6 +71,14 @@ def validate_tags(raw: dict) -> dict:
     }
 
 
+def is_quota_error(error: Exception) -> bool:
+    """무료 한도나 크레딧을 다 쓴 오류인지 확인한다. 이 경우 나머지 영상도 실패할 것이므로 멈춘다."""
+    if getattr(error, "code", None) == 429:
+        return True
+    text = str(error).lower()
+    return "resource_exhausted" in text or "quota" in text or "rate limit" in text
+
+
 def check_model(model: str, api_key_env: str = "GEMINI_API_KEY") -> str:
     """영상 분석 전에 모델 이름이 동작하는지 짧은 텍스트 호출로 확인한다."""
     from google import genai
