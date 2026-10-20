@@ -40,7 +40,7 @@ def resolve_root(config: dict) -> Path:
 def make_layout(root: Path) -> dict[str, Path]:
     layout = {
         "inbox": root / "INBOX",              # 새 영상을 넣는 곳
-        "footage": root / "FOOTAGE",          # 원본 보관 (날짜별, 수정·삭제 금지)
+        "library": root / "LIBRARY",          # 원본 보관 (날짜별, 수정·삭제 금지)
         "proxy": root / "PROXY",              # 분석용 저용량 사본 (날짜별)
         "duplicates": root / "DUPLICATES",    # 중복으로 빠진 파일 (확인 후 직접 삭제)
         "index": root / "CLIP_INDEX",         # 클립 정보, 수집 기록, 로그

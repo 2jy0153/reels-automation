@@ -8,22 +8,16 @@
 ```
 SOURCE_LIBRARY/
   INBOX/                     새 영상을 넣는 곳 (정리되면 비워짐)
-  FOOTAGE/YYYY-MM-DD/        원본 보관. 날짜별, 수정·삭제 금지
-  PROXY/YYYY-MM-DD/          분석·편집용 저용량 사본 (원본과 같은 이름)
+  LIBRARY/YYYY-MM-DD/        원본 전부. 날짜별 한 단계, 수정·삭제 금지
+  PROXY/YYYY-MM-DD/          분석·편집용 720p 사본 (원본과 같은 이름)
   DUPLICATES/                중복으로 빠진 파일. 확인 후 직접 지움
-  CLIP_INDEX/                클립 정보, 수집 기록(ingest_log.json)
+  CLIP_INDEX/                태그 정보(clips.json), 태그별 목록(tag_index.json),
+                             기록(ingest_log.json, move_log.json)
   REELS/<릴스 ID>/           릴스 1편 = 폴더 1개
-      script/                원본 대본, 대본 JSON
-      voice/                 문장별 나레이션 mp3
-      subtitles/             자막(SRT)
-      graded/                색 보정본
-      project/               Premiere 프로젝트
-      export/                완성본
-      thumbnail/             썸네일
-  LIBRARY/PRODUCT/           기존 자료. 이 자동화는 건드리지 않음
+      script/ voice/ subtitles/ graded/ project/ export/ thumbnail/
 ```
 
-원본(FOOTAGE)과 작업 폴더(REELS)를 나눈 이유: 원본은 한 번 정해지면 계속 참조만 하고, 편집 작업은 릴스마다 폴더를 따로 써야 나중에 찾기 쉽습니다. 영상 실무에서 흔히 쓰는 방식입니다.
+주제(BTS, 제품, 장소 등)로 폴더를 나누지 않습니다. 한 파일이 여러 주제에 속할 수 있어서, 폴더 대신 **태그**로 찾습니다.
 
 ## 파일 이름 규칙
 
@@ -38,7 +32,7 @@ SOURCE_LIBRARY/
 
 ## 중복 처리
 
-원본 이름과 크기가 같은 파일은 한 개만 남깁니다. 먼저 들어온 파일을 FOOTAGE에 두고, 나머지는 DUPLICATES로 옮깁니다. 이미 정리된 파일과 비교하므로 같은 파일을 다시 넣어도 중복으로 걸러집니다.
+원본 이름과 크기가 같은 파일은 한 개만 남깁니다. 먼저 들어온 파일을 LIBRARY에 두고, 나머지는 DUPLICATES로 옮깁니다. 이미 정리된 파일과 비교하므로 같은 파일을 다시 넣어도 중복으로 걸러집니다.
 
 ## 명령 (Claude가 실행)
 

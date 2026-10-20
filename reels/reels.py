@@ -2,10 +2,12 @@
 
   inbox                       INBOX에 있는 영상과 옮길 계획을 보여준다 (옮기지 않음)
   ingest                      계획만 보여준다 (옮기지 않음)
-  ingest --yes                INBOX 영상을 FOOTAGE로 옮기고 중복을 걸러낸다
+  ingest --yes                INBOX 영상을 LIBRARY/날짜 폴더로 옮기고 중복을 걸러낸다
+  organize                    LIBRARY 기존 원본을 날짜별 구조로 옮길 계획만 보여준다
+  organize --yes              위 계획대로 실제로 옮긴다
   script import <파일>         대본(.md/.txt)을 대본 JSON으로 바꾸고 검사한다
   script check <JSON 파일>     대본 JSON을 다시 검사한다
-  proxy                       FOOTAGE 영상의 720p 분석용 사본을 PROXY에 만든다 (있으면 건너뜀)
+  proxy                       LIBRARY 영상의 720p 분석용 사본을 PROXY에 만든다 (있으면 건너뜀)
   log [--limit N]             사본(없으면 원본)을 Gemini로 분석해 태그를 저장한다 (태깅 안 된 것만)
   check                       Gemini 모델이 동작하는지 확인한다
 """
@@ -21,6 +23,7 @@ sys.path.insert(0, str(HERE))
 import clip_index  # noqa: E402
 import common  # noqa: E402
 import ingest  # noqa: E402
+import organize  # noqa: E402
 import proxy  # noqa: E402
 import script  # noqa: E402
 import tagger  # noqa: E402
@@ -48,14 +51,14 @@ def cmd_inbox(args: argparse.Namespace) -> None:
     if not files:
         print("INBOX가 비어 있습니다. 영상을 넣은 뒤 다시 확인해 주세요.")
         return
-    plans = ingest.plan_ingest(files, layout["footage"], layout["index"])
+    plans = ingest.plan_ingest(files, layout["library"], layout["index"])
     print(f"INBOX에 영상 {len(files)}개가 있습니다.")
     for plan in plans:
         size_mb = plan.src.stat().st_size / 1_000_000
         if plan.dst is None:
             print(f"  - {plan.src.name} ({size_mb:.1f} MB) → 중복: DUPLICATES로 이동 ({plan.note})")
         else:
-            print(f"  - {plan.src.name} ({size_mb:.1f} MB) → FOOTAGE/{plan.dst.parent.name}/{plan.dst.name}")
+            print(f"  - {plan.src.name} ({size_mb:.1f} MB) → LIBRARY/{plan.dst.parent.name}/{plan.dst.name}")
     print("정리를 시작하려면 'ingest --yes'를 실행하세요.")
 
 
@@ -66,7 +69,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     if not files:
         print("INBOX가 비어 있습니다.")
         return
-    plans = ingest.plan_ingest(files, layout["footage"], layout["index"])
+    plans = ingest.plan_ingest(files, layout["library"], layout["index"])
     if not args.yes:
         print(f"아직 아무것도 옮기지 않았습니다. 대상 {len(plans)}개. 시작하려면 'ingest --yes'를 실행하세요.")
         return
@@ -100,11 +103,34 @@ def cmd_script_check(args: argparse.Namespace) -> None:
     print_script_report(errors, warnings)
 
 
+def cmd_organize(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    moves = organize.plan_organize(layout["library"], config["video_exts"])
+    if not moves:
+        print("LIBRARY에 영상이 없습니다.")
+        return
+    in_place = sum(1 for m in moves if m.dst == m.src)
+    dups = [m for m in moves if m.dst is None]
+    print(f"LIBRARY 영상 {len(moves)}개: 이미 제자리 {in_place}개, 옮김 {len(moves) - in_place - len(dups)}개, 중복 {len(dups)}개")
+    for move in moves:
+        if move.dst == move.src:
+            continue
+        if move.dst is None:
+            print(f"  - 중복: {move.src.relative_to(layout['library'])} ({move.note})")
+        else:
+            print(f"  - {move.src.relative_to(layout['library'])} → {move.dst.parent.name}/{move.dst.name}")
+    if not args.yes:
+        print("아직 아무것도 옮기지 않았습니다. 진행하려면 'organize --yes'를 실행하세요.")
+        return
+    organize.apply_organize(moves, layout["library"], layout["duplicates"], layout["index"])
+
+
 def cmd_proxy(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
-    videos = sorted(p for p in layout["footage"].rglob("*") if ingest.is_video(p, config["video_exts"]))
-    todo = [(src, proxy.proxy_path(src, layout["footage"], layout["proxy"])) for src in videos]
+    videos = sorted(p for p in layout["library"].rglob("*") if ingest.is_video(p, config["video_exts"]))
+    todo = [(src, proxy.proxy_path(src, layout["library"], layout["proxy"])) for src in videos]
     todo = [(src, dst) for src, dst in todo if not dst.exists()]
     if not todo:
         print("만들 사본이 없습니다.")
@@ -121,33 +147,33 @@ def cmd_proxy(args: argparse.Namespace) -> None:
 def cmd_log(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
-    videos = sorted(p for p in layout["footage"].rglob("*") if ingest.is_video(p, config["video_exts"]))
+    videos = sorted(p for p in layout["library"].rglob("*") if ingest.is_video(p, config["video_exts"]))
     clips = clip_index.load_clips(layout["index"])
     pending = pending_clips(videos, clips, args.limit)
     if not pending:
         print("태깅할 클립이 없습니다.")
         return
     print(f"태깅 대상 {len(pending)}개")
-    for footage_file in pending:
+    for library_file in pending:
         # 원본 대신 사본을 올려 업로드 시간과 비용을 줄인다. 사본이 없으면 원본을 쓴다.
-        path = proxy.proxy_path(footage_file, layout["footage"], layout["proxy"])
+        path = proxy.proxy_path(library_file, layout["library"], layout["proxy"])
         if not path.exists():
-            path = footage_file
+            path = library_file
         try:
             tags = tagger.analyze_video(path, model=config["gemini_model"])
-            record = {"file": str(footage_file), "status": "tagged", **tags}
-            print(f"  태깅 완료: {footage_file.name} / {tags['bag_type']} / {tags['person']}")
+            record = {"file": str(library_file), "status": "tagged", **tags}
+            print(f"  태깅 완료: {library_file.name} / {tags['bag_type']} / {tags['person']}")
         except Exception as error:  # 실패해도 기록을 남겨 다음에 다시 시도할 수 있게 한다.
             record = {
-                "file": str(footage_file),
+                "file": str(library_file),
                 "status": "tag_failed",
                 "error": str(error)[:300],
                 "bag_type": tagger.UNKNOWN,
                 "person": tagger.UNKNOWN,
                 "needs_review": True,
             }
-            print(f"  태깅 실패: {footage_file.name} / {error}")
-        clip_index.upsert_clip(layout["index"], footage_file.stem, record)
+            print(f"  태깅 실패: {library_file.name} / {error}")
+        clip_index.upsert_clip(layout["index"], library_file.stem, record)
 
 
 def cmd_check(args: argparse.Namespace) -> None:
@@ -177,6 +203,10 @@ def main() -> None:
     check_p = script_sub.add_parser("check", help="대본 JSON 검사")
     check_p.add_argument("file")
     check_p.set_defaults(func=cmd_script_check)
+
+    organize_p = sub.add_parser("organize", help="LIBRARY 기존 원본을 날짜별 구조로 정리")
+    organize_p.add_argument("--yes", action="store_true", help="확인 후 실제로 옮김")
+    organize_p.set_defaults(func=cmd_organize)
 
     sub.add_parser("proxy", help="분석용 720p 사본 만들기").set_defaults(func=cmd_proxy)
 

@@ -22,10 +22,10 @@ class IngestTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         base = Path(self.tmp.name)
         self.inbox = base / "INBOX"
-        self.footage = base / "FOOTAGE"
+        self.library = base / "LIBRARY"
         self.duplicates = base / "DUPLICATES"
         self.index = base / "CLIP_INDEX"
-        for folder in (self.inbox, self.footage, self.duplicates, self.index):
+        for folder in (self.inbox, self.library, self.duplicates, self.index):
             folder.mkdir()
 
     def tearDown(self):
@@ -72,23 +72,23 @@ class IngestTests(unittest.TestCase):
     def test_same_name_and_size_in_one_batch_keeps_first_only(self):
         first = self.make_in("a", "20260904_150352.mp4", b"abc")
         second = self.make_in("b", "20260904_150352.mp4", b"abc")
-        plans = ingest.plan_ingest([first, second], self.footage, self.index)
+        plans = ingest.plan_ingest([first, second], self.library, self.index)
         self.assertIsNotNone(plans[0].dst)
         self.assertIsNone(plans[1].dst)
 
     def test_same_name_different_size_is_kept_with_suffix(self):
         a = self.make_in("a", "x.mp4", b"abc")
         b = self.make_in("b", "x.mp4", b"abcdef")
-        plans = ingest.plan_ingest([a, b], self.footage, self.index)
+        plans = ingest.plan_ingest([a, b], self.library, self.index)
         self.assertIsNotNone(plans[0].dst)
         self.assertIsNotNone(plans[1].dst)
         self.assertNotEqual(plans[0].dst, plans[1].dst)
 
     def test_run_moves_verified_copy_and_records_log(self):
         src = self.make("20260904_150352.mp4", b"abc")
-        plans = ingest.plan_ingest([src], self.footage, self.index)
+        plans = ingest.plan_ingest([src], self.library, self.index)
         ingest.run_plan(plans, self.duplicates, self.index)
-        final = self.footage / "2026-09-04" / "20260904_150352.mp4"
+        final = self.library / "2026-09-04" / "20260904_150352.mp4"
         self.assertEqual(final.read_bytes(), b"abc")
         self.assertFalse(src.exists())
         log = ingest.load_log(self.index)
@@ -97,20 +97,20 @@ class IngestTests(unittest.TestCase):
 
     def test_already_ingested_file_becomes_duplicate_on_next_run(self):
         first = self.make("20260904_150352.mp4", b"abc")
-        ingest.run_plan(ingest.plan_ingest([first], self.footage, self.index), self.duplicates, self.index)
+        ingest.run_plan(ingest.plan_ingest([first], self.library, self.index), self.duplicates, self.index)
 
         again = self.make("20260904_150352.mp4", b"abc")
-        plans = ingest.plan_ingest([again], self.footage, self.index)
+        plans = ingest.plan_ingest([again], self.library, self.index)
         self.assertIsNone(plans[0].dst)
         ingest.run_plan(plans, self.duplicates, self.index)
         self.assertTrue((self.duplicates / "20260904_150352.mp4").exists())
-        self.assertEqual(len(list(self.footage.rglob("*.mp4"))), 1)
+        self.assertEqual(len(list(self.library.rglob("*.mp4"))), 1)
 
     def test_no_overwrite_when_destination_exists(self):
-        (self.footage / "2026-09-04").mkdir()
-        (self.footage / "2026-09-04" / "20260904_150352.mp4").write_bytes(b"old")
+        (self.library / "2026-09-04").mkdir()
+        (self.library / "2026-09-04" / "20260904_150352.mp4").write_bytes(b"old")
         src = self.make("20260904_150352.mp4", b"newer-content")
-        plans = ingest.plan_ingest([src], self.footage, self.index)
+        plans = ingest.plan_ingest([src], self.library, self.index)
         self.assertEqual(plans[0].dst.name, "20260904_150352_2.mp4")
 
 
@@ -166,12 +166,68 @@ class PendingClipTests(unittest.TestCase):
         self.assertEqual(len(reels_cli.pending_clips(videos, {}, 2)), 2)
 
 
+class OrganizeTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.library = base / "LIBRARY"
+        self.index = base / "CLIP_INDEX"
+        self.duplicates = base / "DUPLICATES"
+        for folder in (self.library, self.index, self.duplicates):
+            folder.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def put(self, rel, content=b"v"):
+        path = self.library / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        os.utime(path, (1_700_000_000, 1_700_000_000))
+        return path
+
+    def test_nested_folders_are_flattened_by_date(self):
+        import organize
+
+        self.put("PRODUCT/2026-09-04/VIDEO/20260904_150352.mp4", b"a")
+        self.put("BTS/clip_IMG_20260905.mov", b"b")
+        moves = organize.plan_organize(self.library, EXTS)
+        targets = {m.dst.relative_to(self.library).as_posix() for m in moves}
+        self.assertEqual(targets, {"2026-09-04/20260904_150352.mp4", "2026-09-05/20260905_clip_IMG.mov"})
+
+    def test_duplicate_name_and_size_goes_to_duplicates(self):
+        import organize
+
+        self.put("PRODUCT/2026-09-04/VIDEO/x.mp4", b"same")
+        self.put("BTS/x.mp4", b"same")
+        moves = organize.plan_organize(self.library, EXTS)
+        self.assertEqual(sum(1 for m in moves if m.dst is None), 1)
+
+    def test_file_already_in_place_is_not_moved(self):
+        import organize
+
+        self.put("2026-09-04/20260904_150352.mp4")
+        moves = organize.plan_organize(self.library, EXTS)
+        self.assertEqual(moves[0].dst, moves[0].src)
+
+    def test_apply_moves_files_and_logs_them(self):
+        import organize
+
+        self.put("PRODUCT/2026-09-04/VIDEO/20260904_150352.mp4", b"a")
+        moves = organize.plan_organize(self.library, EXTS)
+        organize.apply_organize(moves, self.library, self.duplicates, self.index)
+        self.assertTrue((self.library / "2026-09-04" / "20260904_150352.mp4").exists())
+        self.assertFalse((self.library / "PRODUCT").exists())
+        log = json.loads((self.index / "move_log.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(log), 1)
+
+
 class ProxyTests(unittest.TestCase):
-    def test_proxy_mirrors_footage_date_folder(self):
+    def test_proxy_mirrors_library_date_folder(self):
         import proxy as proxy_mod
 
-        src = Path("/ssd/FOOTAGE/2026-10-20/20261020_A001.mp4")
-        dst = proxy_mod.proxy_path(src, Path("/ssd/FOOTAGE"), Path("/ssd/PROXY"))
+        src = Path("/ssd/LIBRARY/2026-10-20/20261020_A001.mp4")
+        dst = proxy_mod.proxy_path(src, Path("/ssd/LIBRARY"), Path("/ssd/PROXY"))
         self.assertEqual(dst, Path("/ssd/PROXY/2026-10-20/20261020_A001.mp4"))
 
     def test_ffmpeg_scales_to_height_and_keeps_aspect(self):

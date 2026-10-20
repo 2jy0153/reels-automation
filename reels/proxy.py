@@ -1,6 +1,6 @@
 """분석·편집용 저용량 사본(720p)을 만든다. 원본은 건드리지 않는다.
 
-FOOTAGE/YYYY-MM-DD/이름.mp4 → PROXY/YYYY-MM-DD/이름.mp4
+LIBRARY/YYYY-MM-DD/이름.mp4 → PROXY/YYYY-MM-DD/이름.mp4
 """
 
 import os
@@ -9,8 +9,8 @@ import subprocess
 from pathlib import Path
 
 
-def proxy_path(footage_file: Path, footage_root: Path, proxy_root: Path) -> Path:
-    return proxy_root / footage_file.relative_to(footage_root)
+def proxy_path(library_file: Path, library_root: Path, proxy_root: Path) -> Path:
+    return proxy_root / library_file.relative_to(library_root)
 
 
 def ffmpeg_command(src: Path, dst: Path, height: int) -> list[str]:

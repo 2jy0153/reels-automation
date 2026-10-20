@@ -1,4 +1,4 @@
-"""INBOX의 영상을 FOOTAGE 아래 날짜 폴더로 옮긴다.
+"""INBOX의 영상을 LIBRARY 아래 날짜 폴더로 옮긴다.
 
 - 이름: YYYYMMDD_원래이름.확장자 (시분초는 쓰지 않는다)
 - 날짜: 파일명에 YYYYMMDD가 있으면 그 날짜, 없으면 파일 수정일
@@ -87,7 +87,7 @@ def save_log(index_dir: Path, entries: list[dict]) -> None:
     os.replace(temp, path)
 
 
-def plan_ingest(files: list[Path], footage: Path, index_dir: Path) -> list[Plan]:
+def plan_ingest(files: list[Path], library: Path, index_dir: Path) -> list[Plan]:
     seen = {(entry["original_name"], entry["size"]) for entry in load_log(index_dir)}
     taken: set[Path] = set()
     plans = []
@@ -98,7 +98,7 @@ def plan_ingest(files: list[Path], footage: Path, index_dir: Path) -> list[Plan]
             continue
         seen.add(key)
         when = recording_date(src)
-        dst = unique_path(footage / f"{when:%Y-%m-%d}" / new_name(src, when), taken)
+        dst = unique_path(library / f"{when:%Y-%m-%d}" / new_name(src, when), taken)
         plans.append(Plan(src, dst))
     return plans
 
@@ -135,6 +135,6 @@ def run_plan(plans: list[Plan], duplicates: Path, index_dir: Path) -> None:
                 "ingested_at": datetime.now().isoformat(timespec="seconds"),
             })
             save_log(index_dir, log)
-            print(f"  정리 완료: {plan.src.name} → FOOTAGE/{plan.dst.parent.name}/{plan.dst.name}")
+            print(f"  정리 완료: {plan.src.name} → LIBRARY/{plan.dst.parent.name}/{plan.dst.name}")
         except OSError as error:
             print(f"  실패(원본 유지): {plan.src.name} / {error}")
