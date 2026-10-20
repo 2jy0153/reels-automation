@@ -101,3 +101,11 @@ def build_srt(timeline: list[dict], style: dict) -> str:
 def load_timeline(voice_dir: Path) -> list[dict]:
     payload = json.loads((voice_dir / "timeline.json").read_text(encoding="utf-8"))
     return payload["lines"]
+
+
+def manual_sheet(timeline: list[dict], style: dict) -> str:
+    """SRT를 가져올 수 없을 때 앱에 손으로 입력하는 목록."""
+    lines = ["번호\t시작\t끝\t자막"]
+    for index, (start, end, text) in enumerate(cues(timeline, style), start=1):
+        lines.append(f"{index}\t{format_time(start)}\t{format_time(end)}\t{text}")
+    return "\n".join(lines) + "\n"

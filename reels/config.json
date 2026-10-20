@@ -38,5 +38,7 @@
     "bottom_margin": 260,
     "char_width_factor": 1.0,
     "max_lines": 1
-  }
+  },
+  "drive_backup_dir": "",
+  "backup_interval_seconds": 60
 }

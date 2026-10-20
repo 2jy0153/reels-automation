@@ -21,7 +21,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import backup  # noqa: E402
 import clip_index  # noqa: E402
+import edit_plan  # noqa: E402
+import assemble  # noqa: E402
 import media_info  # noqa: E402
 import common  # noqa: E402
 import ingest  # noqa: E402
@@ -353,6 +356,123 @@ def cmd_orient(args: argparse.Namespace) -> None:
         print(f"  {path.name}: {' → '.join(labels) or '알 수 없음'}")
 
 
+def cmd_plan_draft(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    folder = layout["reels"] / args.reel_id
+    timeline_path = folder / "voice" / "timeline.json"
+    if not timeline_path.exists():
+        raise SystemExit("timeline.json이 없습니다. 먼저 'voice <ID> --speed 값'을 실행하세요.")
+    timeline = json.loads(timeline_path.read_text(encoding="utf-8"))["lines"]
+    clips = {
+        record["file"]: record
+        for record in clip_index.load_clips(layout["index"]).values()
+        if record.get("status") == "tagged" and Path(record.get("file", "")).exists()
+    }
+    out = folder / "edit" / "plan.json"
+    existing = json.loads(out.read_text(encoding="utf-8")) if out.exists() else None
+    durations = {path: voice.duration(Path(path)) for path in clips}
+    plan = edit_plan.draft_plan(timeline, clips, durations, existing)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+    empty = sum(1 for item in plan if not item.get("clip"))
+    print(f"편집 계획 저장: {out} (문단 {len(plan)}개, 영상 미정 {empty}개)")
+    for item in plan:
+        target = Path(item["clip"]).name if item.get("clip") else "영상 미정"
+        print(f"  {item['no']:02d}번 → {target} ({item['note']})")
+
+
+def cmd_assemble(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    folder = layout["reels"] / args.reel_id
+    timeline_path = folder / "voice" / "timeline.json"
+    plan_path = folder / "edit" / "plan.json"
+    for required in (timeline_path, plan_path):
+        if not required.exists():
+            raise SystemExit(f"파일이 없습니다: {required}")
+    timeline = json.loads(timeline_path.read_text(encoding="utf-8"))["lines"]
+    plan = assemble.load_plan(plan_path)
+    narration = [str(folder / "voice" / f"{line['no']:02d}.mp3") for line in timeline]
+    missing = [path for path in narration if not Path(path).exists()]
+    if missing:
+        raise SystemExit(f"음성 파일이 없습니다: {missing[0]} 외 {len(missing) - 1}개")
+    clips = sorted({item["clip"] for item in plan if item.get("clip")})
+    not_found = [clip for clip in clips if not Path(clip).exists()]
+    if not_found:
+        raise SystemExit(f"영상 파일을 찾을 수 없습니다: {not_found[0]} 외 {len(not_found) - 1}개")
+    source_frames = {clip: round(voice.duration(Path(clip)) * assemble.FPS) for clip in clips}
+    xml = assemble.build_xmeml(args.reel_id, timeline, plan, narration, source_frames)
+    out = folder / "project" / f"{args.reel_id}.xml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(xml, encoding="utf-8")
+    print(f"프리미어 타임라인 저장: {out}")
+    print("프리미어에서 File > Import로 가져온 뒤, 자막은 SRT를 따로 가져오세요.")
+
+
+def cmd_subtitle_sheet(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    voice_dir = layout["reels"] / args.reel_id / "voice"
+    if not (voice_dir / "timeline.json").exists():
+        raise SystemExit("timeline.json이 없습니다. 먼저 'voice <ID> --speed 값'을 실행하세요.")
+    out = layout["reels"] / args.reel_id / "subtitles" / f"{args.reel_id}_manual.txt"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(subtitles.manual_sheet(subtitles.load_timeline(voice_dir), config["subtitle"]), encoding="utf-8")
+    print(f"수동 입력용 자막 시트: {out}")
+
+
+def _backup_paths(config: dict) -> tuple[Path, Path, Path]:
+    if not config.get("drive_backup_dir"):
+        raise SystemExit("config.json의 drive_backup_dir이 비어 있습니다. 구글 드라이브 폴더 경로를 넣어 주세요.")
+    layout = common.make_layout(common.resolve_root(config))
+    return layout["reels"], Path(config["drive_backup_dir"]).expanduser(), layout["index"]
+
+
+def cmd_backup(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    reels, drive, index = _backup_paths(config)
+    if not drive.is_dir():
+        raise SystemExit(f"백업 폴더가 보이지 않습니다: {drive}")
+    copied = backup.backup_once(reels, drive, index)
+    print(f"백업 완료: {len(copied)}개 새로 복사 (영상과 썸네일)")
+
+
+def cmd_backup_watch(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    reels, drive, index = _backup_paths(config)
+    print(f"백업 감시 시작: {reels} → {drive} (간격 {config['backup_interval_seconds']}초)")
+    backup.watch(reels, drive, index, config["backup_interval_seconds"])
+
+
+def cmd_backup_install(args: argparse.Namespace) -> None:
+    """로그인할 때 백업 감시가 자동으로 켜지도록 등록한다."""
+    import plistlib
+    import subprocess
+
+    config = common.load_config()
+    _backup_paths(config)  # 설정이 없으면 여기서 멈춘다
+    label = "com.nos.reels.backup"
+    plist_path = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
+    log_dir = HERE / "logs"
+    log_dir.mkdir(exist_ok=True)
+    plist = {
+        "Label": label,
+        "ProgramArguments": [sys.executable, str(HERE / "reels.py"), "backup-watch"],
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "WorkingDirectory": str(HERE.parent),
+        "StandardOutPath": str(log_dir / "backup.log"),
+        "StandardErrorPath": str(log_dir / "backup.log"),
+    }
+    plist_path.parent.mkdir(parents=True, exist_ok=True)
+    plist_path.write_bytes(plistlib.dumps(plist))
+    uid = os.getuid()
+    subprocess.run(["launchctl", "bootout", f"gui/{uid}", str(plist_path)], capture_output=True)
+    subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(plist_path)], check=True)
+    print(f"백업 자동 실행 등록 완료. 로그: {log_dir / 'backup.log'}")
+
+
 def cmd_check(args: argparse.Namespace) -> None:
     config = common.load_config()
     reply = tagger.check_model(config["gemini_model"])
@@ -413,6 +533,21 @@ def main() -> None:
     orient_p = sub.add_parser("orient", help="영상 방향(세로/가로) 태그 달기 (Gemini 미사용)")
     orient_p.add_argument("--force", action="store_true", help="이미 확인한 영상도 다시 확인")
     orient_p.set_defaults(func=cmd_orient)
+
+    sub.add_parser("plan-draft", help="태그와 대본으로 편집 계획 만들기 (없는 영상은 빈 칸)").add_argument("reel_id")
+    sub.choices["plan-draft"].set_defaults(func=cmd_plan_draft)
+
+    assemble_p = sub.add_parser("assemble", help="편집 계획으로 프리미어 타임라인(XML) 만들기")
+    assemble_p.add_argument("reel_id")
+    assemble_p.set_defaults(func=cmd_assemble)
+
+    sheet_p = sub.add_parser("subtitle-sheet", help="캡컷 모바일에 손으로 입력할 자막 시트 만들기")
+    sheet_p.add_argument("reel_id")
+    sheet_p.set_defaults(func=cmd_subtitle_sheet)
+
+    sub.add_parser("backup", help="완성 영상과 썸네일을 구글 드라이브 폴더로 백업").set_defaults(func=cmd_backup)
+    sub.add_parser("backup-watch", help="완성본 폴더를 계속 감시해서 자동 백업").set_defaults(func=cmd_backup_watch)
+    sub.add_parser("backup-install", help="로그인할 때 백업 감시 자동 실행 등록 (맥)").set_defaults(func=cmd_backup_install)
 
     sub.add_parser("check", help="Gemini 모델 확인").set_defaults(func=cmd_check)
 

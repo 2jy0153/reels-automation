@@ -316,6 +316,131 @@ class SubtitleTests(unittest.TestCase):
         self.assertEqual(items[1][:2], (2.3, 4.0))
 
 
+class EditPlanTests(unittest.TestCase):
+    def test_matching_vertical_clip_is_preferred(self):
+        import edit_plan
+
+        timeline = [{"no": 1, "start": 0.0, "end": 3.0, "narration": "노트북과 아이패드를 넣어요"}]
+        clips = {
+            "/a.mp4": {"scene": "책상 위 노트북", "keywords": ["노트북"], "orientation": ["가로"]},
+            "/b.mp4": {"scene": "노트북 아이패드", "keywords": ["노트북", "아이패드"], "orientation": ["세로"]},
+        }
+        plan = edit_plan.draft_plan(timeline, clips, {"/a.mp4": 30.0, "/b.mp4": 30.0})
+        self.assertEqual(plan[0]["clip"], "/b.mp4")
+
+    def test_no_tags_gives_placeholders(self):
+        import edit_plan
+
+        timeline = [{"no": 1, "start": 0.0, "end": 2.0, "narration": "노트북을 펼쳐요"}]
+        plan = edit_plan.draft_plan(timeline, {}, {})
+        self.assertIsNone(plan[0]["clip"])
+        self.assertIn("영상 필요", plan[0]["note"])
+
+    def test_manual_choice_is_kept_and_empty_lines_are_filled(self):
+        import edit_plan
+
+        timeline = [
+            {"no": 1, "start": 0.0, "end": 2.0, "narration": "가나다"},
+            {"no": 2, "start": 2.0, "end": 4.0, "narration": "노트북"},
+        ]
+        existing = [{"no": 1, "clip": "/mine.mp4", "in": 3.0, "note": "직접 고름"}]
+        clips = {"/tag.mp4": {"scene": "노트북", "keywords": ["노트북"], "orientation": ["세로"]}}
+        plan = edit_plan.draft_plan(timeline, clips, {"/tag.mp4": 30.0, "/mine.mp4": 30.0}, existing)
+        self.assertEqual(plan[0]["clip"], "/mine.mp4")
+        self.assertEqual(plan[1]["clip"], "/tag.mp4")
+
+    def test_reused_clip_continues_from_previous_point(self):
+        import edit_plan
+
+        timeline = [
+            {"no": 1, "start": 0.0, "end": 2.0, "narration": "가나다"},
+            {"no": 2, "start": 2.0, "end": 4.0, "narration": "가나다"},
+        ]
+        clips = {"/only.mp4": {"scene": "가나다", "orientation": ["세로"]}}
+        plan = edit_plan.draft_plan(timeline, clips, {"/only.mp4": 30.0})
+        self.assertEqual(plan[0]["in"], 0.0)
+        self.assertEqual(plan[1]["in"], 2.0)
+
+
+class AssembleTests(unittest.TestCase):
+    TIMELINE = [
+        {"no": 1, "start": 0.0, "end": 2.0, "narration": "가"},
+        {"no": 2, "start": 2.3, "end": 4.0, "narration": "나"},
+    ]
+
+    def test_pieces_cover_pauses_and_use_plan_in_points(self):
+        import assemble as assemble_mod
+
+        plan = [{"no": 1, "clip": "/a.mp4", "in": 5.0}, {"no": 2, "clip": "/b.mp4", "in": 1.0}]
+        pieces = assemble_mod.video_pieces(self.TIMELINE, plan)
+        self.assertEqual((pieces[0]["timeline_start"], pieces[0]["timeline_end"]), (0.0, 2.3))
+        self.assertEqual((pieces[0]["source_in"], pieces[0]["source_out"]), (5.0, 7.3))
+        self.assertEqual((pieces[1]["timeline_start"], pieces[1]["timeline_end"]), (2.3, 4.0))
+
+    def test_undecided_line_becomes_a_marker_and_no_clip(self):
+        import xml.etree.ElementTree as ET
+
+        import assemble as assemble_mod
+
+        plan = [{"no": 1, "clip": "/a.mp4", "in": 0.0}, {"no": 2, "clip": None, "in": 0.0}]
+        xml = assemble_mod.build_xmeml("t", self.TIMELINE, plan, ["/v/01.mp3", "/v/02.mp3"], {"/a.mp4": 300})
+        root = ET.fromstring(xml)
+        self.assertEqual(len(root.findall(".//video/track/clipitem")), 1)
+        markers = root.findall(".//marker/name")
+        self.assertEqual(len(markers), 1)
+        self.assertIn("2번 문단", markers[0].text)
+
+    def test_missing_plan_entry_is_an_error(self):
+        import assemble as assemble_mod
+
+        with self.assertRaises(ValueError):
+            assemble_mod.video_pieces(self.TIMELINE, [{"no": 1, "clip": "/a.mp4", "in": 0}])
+
+    def test_xml_is_well_formed_and_has_both_tracks(self):
+        import xml.etree.ElementTree as ET
+
+        import assemble as assemble_mod
+
+        plan = [{"no": 1, "clip": "/Volumes/SSD 1TB/a b.mp4", "in": 0.0}, {"no": 2, "clip": "/a.mp4", "in": 0.0}]
+        xml = assemble_mod.build_xmeml("test", self.TIMELINE, plan, ["/v/01.mp3", "/v/02.mp3"],
+                                       {"/Volumes/SSD 1TB/a b.mp4": 300, "/a.mp4": 300})
+        root = ET.fromstring(xml)
+        video = root.findall(".//video/track/clipitem")
+        audio = root.findall(".//audio/track/clipitem")
+        self.assertEqual(len(video), 2)
+        self.assertEqual(len(audio), 2)
+        self.assertEqual(video[0].find("end").text, "69")  # 2.3초 × 30fps
+        self.assertIn("%20", video[0].find("file/pathurl").text)
+
+
+class BackupTests(unittest.TestCase):
+    def test_finals_are_copied_once_and_skipped_after(self):
+        import backup as backup_mod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reels = base / "REELS"
+            (reels / "20261021_x" / "export").mkdir(parents=True)
+            (reels / "20261021_x" / "export" / "final.mp4").write_bytes(b"video")
+            (reels / "20261021_x" / "export" / "thumb.png").write_bytes(b"img")
+            (reels / "20261021_x" / "voice").mkdir()
+            (reels / "20261021_x" / "voice" / "01.mp3").write_bytes(b"not a final")
+            drive, index = base / "Drive", base / "CLIP_INDEX"
+            first = backup_mod.backup_once(reels, drive, index)
+            self.assertEqual(sorted(p.name for p in first), ["final.mp4", "thumb.png"])
+            self.assertEqual(backup_mod.backup_once(reels, drive, index), [])
+            self.assertFalse((drive / "20261021_x" / "voice").exists())
+
+
+class SubtitleSheetTests(unittest.TestCase):
+    def test_manual_sheet_lists_each_cue_with_times(self):
+        import subtitles as subtitles_mod
+
+        timeline = [{"no": 1, "start": 0.0, "end": 2.0, "narration": "가나다라."}]
+        sheet = subtitles_mod.manual_sheet(timeline, STYLE)
+        self.assertIn("1\t00:00:00,000\t00:00:02,000\t가나다라.", sheet)
+
+
 class VoiceTests(unittest.TestCase):
     LINES = [
         {"no": 1, "target_start": 0, "target_end": 3, "narration": "첫 문장."},
