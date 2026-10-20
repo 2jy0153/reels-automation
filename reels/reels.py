@@ -279,7 +279,8 @@ def cmd_split_voice(args: argparse.Namespace) -> None:
     if args.file:
         source = Path(args.file).expanduser()
     else:
-        candidates = sorted(p for p in voice_dir.glob("*.mp3"))
+        # 확장자 대소문자(.mp3, .MP3)와 상관없이 voice 폴더의 음성 파일을 찾는다.
+        candidates = sorted(p for p in voice_dir.iterdir() if p.is_file() and p.suffix.lower() == ".mp3")
         if len(candidates) != 1:
             raise SystemExit(f"voice 폴더에 mp3가 {len(candidates)}개 있습니다. 파일을 지정하세요: split-voice <ID> <파일>")
         source = candidates[0]
