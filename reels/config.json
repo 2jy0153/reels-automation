@@ -37,6 +37,6 @@
     "side_margin": 80,
     "bottom_margin": 260,
     "char_width_factor": 1.0,
-    "max_lines": 2
+    "max_lines": 1
   }
 }
