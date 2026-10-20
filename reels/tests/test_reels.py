@@ -15,7 +15,39 @@ import tagger  # noqa: E402
 
 VEXTS = [".mp4", ".mov"]
 PEXTS = [".jpg", ".heic"]
+
+
+def no_metadata(path):
+    return None  # 메타데이터에 날짜가 없는 경우를 흉내 낸다 (exiftool을 부르지 않음)
 FIXTURE = Path(__file__).parent / "fixtures" / "script_v3.md"
+
+
+class MetadataDateTests(unittest.TestCase):
+    def read(self, exif_output):
+        from unittest import mock
+
+        import ingest as ingest_mod
+
+        completed = mock.Mock(stdout=exif_output)
+        with mock.patch.object(ingest_mod.shutil, "which", return_value="/usr/bin/exiftool"), \
+                mock.patch.object(ingest_mod.subprocess, "run", return_value=completed):
+            return ingest_mod.metadata_date(Path("x.mp4"))
+
+    def test_reads_capture_date_and_skips_zero_dates(self):
+        out = '[{"CreateDate": "0000:00:00 00:00:00", "DateTimeOriginal": "2026:07:11 18:29:15"}]'
+        self.assertEqual(self.read(out), date(2026, 7, 11))
+
+    def test_returns_none_when_no_date_tag(self):
+        self.assertIsNone(self.read('[{"SourceFile": "x.mp4"}]'))
+
+    def test_missing_exiftool_stops_with_clear_error(self):
+        from unittest import mock
+
+        import ingest as ingest_mod
+
+        with mock.patch.object(ingest_mod.shutil, "which", return_value=None):
+            with self.assertRaises(RuntimeError):
+                ingest_mod.metadata_date(Path("x.mp4"))
 
 
 class IngestTests(unittest.TestCase):
@@ -48,7 +80,7 @@ class IngestTests(unittest.TestCase):
         return path
 
     def plan(self, files):
-        return ingest.plan_ingest(files, self.library, self.index, VEXTS, PEXTS)
+        return ingest.plan_ingest(files, self.library, self.index, VEXTS, PEXTS, self.duplicates, no_metadata)
 
     def test_skips_macos_metadata(self):
         self.assertFalse(ingest.is_file_to_handle(self.make("._20260906_094555.mp4")))
@@ -71,25 +103,37 @@ class IngestTests(unittest.TestCase):
         self.assertEqual(ingest.new_name(Path("A001_20260922_C006.mp4"), date(2026, 9, 22)),
                          "20260922_A001_C006.mp4")
 
-    def test_date_from_filename_and_camera_code_is_not_a_date(self):
-        self.assertEqual(ingest.recording_date(Path("20260904_150352.mp4")), date(2026, 9, 4))
+    def test_filename_date_wins_over_metadata(self):
+        path = Path("20260904_150352.mp4")
+        self.assertEqual(ingest.recording_date(path, lambda p: date(2020, 1, 1)), date(2026, 9, 4))
+
+    def test_camera_code_is_not_a_date_so_metadata_is_used(self):
+        path = Path("A001_09222312_C006.mp4")
+        self.assertEqual(ingest.recording_date(path, lambda p: date(2026, 10, 1)), date(2026, 10, 1))
+
+    def test_no_filename_date_and_no_metadata_means_no_date(self):
+        self.assertIsNone(ingest.recording_date(Path("A001_09222312_C006.mp4"), no_metadata))
+
+    def test_file_date_is_never_taken_from_modified_time(self):
         path = self.make("A001_09222312_C006.mp4", mtime=1_700_000_000)
-        self.assertEqual(ingest.recording_date(path), date.fromtimestamp(1_700_000_000))
+        self.assertIsNone(ingest.recording_date(path, no_metadata))
 
     def test_destination_by_kind(self):
         video = ingest.destination(self.make("20260904_150352.mp4"), self.library, VEXTS, PEXTS)
         photo = ingest.destination(self.make("20260904_IMG_1.heic"), self.library, VEXTS, PEXTS)
         other = ingest.destination(self.make("memo.pdf"), self.library, VEXTS, PEXTS)
+        undated = ingest.destination(self.make("clip.mp4"), self.library, VEXTS, PEXTS, no_metadata)
         self.assertEqual(video, self.library / "VIDEO" / "2026-09-04" / "20260904_150352.mp4")
         self.assertEqual(photo, self.library / "PHOTO" / "2026-09-04" / "20260904_IMG_1.heic")
         self.assertEqual(other, self.library / "_UNSORTED" / "memo.pdf")
+        self.assertEqual(undated, self.library / "_NO_DATE" / "clip.mp4")
 
     def test_same_name_and_size_in_one_batch_keeps_first_only(self):
         first = self.make_in("a", "20260904_150352.mp4", b"abc")
         second = self.make_in("b", "20260904_150352.mp4", b"abc")
         plans = self.plan([first, second])
-        self.assertIsNotNone(plans[0].dst)
-        self.assertIsNone(plans[1].dst)
+        self.assertFalse(plans[0].note)
+        self.assertTrue(plans[1].note)
 
     def test_same_name_different_size_is_kept_with_suffix(self):
         a = self.make_in("a", "x.mp4", b"abc")
@@ -101,7 +145,7 @@ class IngestTests(unittest.TestCase):
 
     def test_run_moves_verified_copy_and_records_log(self):
         src = self.make("20260904_150352.mp4", b"abc")
-        ingest.run_plan(self.plan([src]), self.duplicates, self.index, self.library)
+        ingest.run_plan(self.plan([src]), self.index, self.library)
         final = self.library / "VIDEO" / "2026-09-04" / "20260904_150352.mp4"
         self.assertEqual(final.read_bytes(), b"abc")
         self.assertFalse(src.exists())
@@ -111,12 +155,12 @@ class IngestTests(unittest.TestCase):
 
     def test_already_ingested_file_becomes_duplicate_on_next_run(self):
         first = self.make("20260904_150352.mp4", b"abc")
-        ingest.run_plan(self.plan([first]), self.duplicates, self.index, self.library)
+        ingest.run_plan(self.plan([first]), self.index, self.library)
 
         again = self.make("20260904_150352.mp4", b"abc")
         plans = self.plan([again])
-        self.assertIsNone(plans[0].dst)
-        ingest.run_plan(plans, self.duplicates, self.index, self.library)
+        self.assertTrue(plans[0].note)
+        ingest.run_plan(plans, self.index, self.library)
         self.assertTrue((self.duplicates / "20260904_150352.mp4").exists())
         self.assertEqual(len(list(self.library.rglob("*.mp4"))), 1)
 
@@ -185,8 +229,9 @@ class OrganizeTests(unittest.TestCase):
         base = Path(self.tmp.name)
         self.library = base / "LIBRARY"
         self.index = base / "CLIP_INDEX"
-        self.index.mkdir()
-        self.library.mkdir()
+        self.duplicates = base / "DUPLICATES"
+        for folder in (self.library, self.index, self.duplicates):
+            folder.mkdir()
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -198,10 +243,10 @@ class OrganizeTests(unittest.TestCase):
         os.utime(path, (1_700_000_000, 1_700_000_000))
         return path
 
-    def plan(self):
+    def plan(self, metadata_reader=no_metadata):
         import organize
 
-        return organize.plan_organize(self.library, VEXTS, PEXTS)
+        return organize.plan_organize(self.library, self.duplicates, VEXTS, PEXTS, metadata_reader)
 
     def test_videos_photos_and_others_are_routed(self):
         self.put("PRODUCT/2026-09-04/VIDEO/20260904_150352.mp4", b"a")
@@ -216,12 +261,22 @@ class OrganizeTests(unittest.TestCase):
             "_UNSORTED/memo.pdf",
         })
 
-    def test_duplicate_stays_where_it_is(self):
+    def test_duplicate_goes_to_duplicates_folder(self):
         self.put("PRODUCT/2026-09-04/VIDEO/x.mp4", b"same")
         self.put("BTS/x.mp4", b"same")
         duplicates = [m for m in self.plan() if m.note.startswith("중복")]
         self.assertEqual(len(duplicates), 1)
-        self.assertEqual(duplicates[0].dst, duplicates[0].src)
+        self.assertEqual(duplicates[0].dst.parent, self.duplicates)
+
+    def test_undated_photo_goes_to_no_date_folder(self):
+        self.put("BTS/IMG_0001.jpg", b"p")
+        moves = self.plan()
+        self.assertEqual(moves[0].dst, self.library / "_NO_DATE" / "IMG_0001.jpg")
+
+    def test_photo_date_comes_from_metadata(self):
+        self.put("BTS/IMG_0002.jpg", b"p")
+        moves = self.plan(lambda p: date(2026, 8, 1))
+        self.assertEqual(moves[0].dst, self.library / "PHOTO" / "2026-08-01" / "20260801_IMG_0002.jpg")
 
     def test_file_already_in_place_is_not_moved(self):
         self.put("VIDEO/2026-09-04/20260904_150352.mp4")

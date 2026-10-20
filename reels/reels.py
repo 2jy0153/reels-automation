@@ -61,14 +61,15 @@ def cmd_inbox(args: argparse.Namespace) -> None:
     if not files:
         print("INBOX가 비어 있습니다. 파일을 넣은 뒤 다시 확인해 주세요.")
         return
-    plans = ingest.plan_ingest(files, layout["library"], layout["index"], config["video_exts"], config["photo_exts"])
+    plans = ingest.plan_ingest(files, layout["library"], layout["index"], config["video_exts"],
+                               config["photo_exts"], layout["duplicates"])
     print(f"INBOX에 파일 {len(files)}개가 있습니다.")
     for plan in plans:
         size_mb = plan.src.stat().st_size / 1_000_000
-        if plan.dst is None:
+        if plan.note:
             print(f"  - {plan.src.name} ({size_mb:.1f} MB) → 중복: DUPLICATES로 이동 ({plan.note})")
         else:
-            print(f"  - {plan.src.name} ({size_mb:.1f} MB) → LIBRARY/{plan.dst.relative_to(layout['library'])}")
+            print(f"  - {plan.src.name} ({size_mb:.1f} MB) → {plan.dst.relative_to(layout['library'].parent)}")
     print("정리를 시작하려면 'ingest --yes'를 실행하세요.")
 
 
@@ -79,12 +80,13 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     if not files:
         print("INBOX가 비어 있습니다.")
         return
-    plans = ingest.plan_ingest(files, layout["library"], layout["index"], config["video_exts"], config["photo_exts"])
+    plans = ingest.plan_ingest(files, layout["library"], layout["index"], config["video_exts"],
+                               config["photo_exts"], layout["duplicates"])
     if not args.yes:
         print(f"아직 아무것도 옮기지 않았습니다. 대상 {len(plans)}개. 시작하려면 'ingest --yes'를 실행하세요.")
         return
     print(f"정리를 시작합니다. 대상 {len(plans)}개")
-    ingest.run_plan(plans, layout["duplicates"], layout["index"], layout["library"])
+    ingest.run_plan(plans, layout["index"], layout["library"])
     print("정리가 끝났습니다.")
 
 
@@ -116,17 +118,18 @@ def cmd_script_check(args: argparse.Namespace) -> None:
 def cmd_organize(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
-    moves = organize.plan_organize(layout["library"], config["video_exts"], config["photo_exts"])
+    moves = organize.plan_organize(layout["library"], layout["duplicates"], config["video_exts"], config["photo_exts"])
     if not moves:
         print("LIBRARY에 파일이 없습니다.")
         return
     kept = [m for m in moves if m.dst == m.src]
     to_move = [m for m in moves if m.dst != m.src]
-    print(f"LIBRARY 파일 {len(moves)}개: 옮김 {len(to_move)}개, 그대로 둠 {len(kept)}개 (중복 포함)")
+    print(f"LIBRARY 파일 {len(moves)}개: 옮김 {len(to_move)}개, 그대로 둠 {len(kept)}개")
     for move in to_move:
-        print(f"  - {move.src.relative_to(layout['library'])} → {move.dst.relative_to(layout['library'])}")
+        target = move.dst.relative_to(layout["library"].parent)
+        print(f"  - {move.src.relative_to(layout['library'])} → {target}" + (f" ({move.note})" if move.note else ""))
     for move in kept:
-        print(f"  - 그대로 둠: {move.src.relative_to(layout['library'])} ({move.note})")
+        print(f"  - 그대로 둠: {move.src.relative_to(layout['library'])}")
     if not args.yes:
         print("아직 아무것도 옮기지 않았습니다. 진행하려면 'organize --yes'를 실행하세요.")
         return
@@ -222,7 +225,10 @@ def main() -> None:
     sub.add_parser("check", help="Gemini 모델 확인").set_defaults(func=cmd_check)
 
     args = parser.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except RuntimeError as error:
+        raise SystemExit(f"중단: {error}")
 
 
 if __name__ == "__main__":
