@@ -71,14 +71,75 @@ def validate_tags(raw: dict) -> dict:
     }
 
 
-def is_quota_error(error: Exception) -> bool:
-    """무료 한도나 크레딧을 다 쓴 오류인지 확인한다. 이 경우 나머지 영상도 실패할 것이므로 멈춘다."""
-    if getattr(error, "code", None) == 429:
+STOP_MARKERS = ("prepay", "credit", "billing", "resource_exhausted", "quota", "rate limit", "permission_denied")
+TRANSIENT_MARKERS = ("unavailable", "high demand", "internal", "deadline")
+
+
+def _error_code(error: Exception) -> int | None:
+    code = getattr(error, "code", None)
+    return code if isinstance(code, int) else None
+
+
+def is_stop_error(error: Exception) -> bool:
+    """결제 크레딧이나 한도 문제처럼, 다시 해도 소용없는 오류. 이때는 바로 멈춘다."""
+    if _error_code(error) in (402, 403, 429):
         return True
     text = str(error).lower()
-    return "resource_exhausted" in text or "quota" in text or "rate limit" in text
+    return any(marker in text for marker in STOP_MARKERS)
 
 
+def is_transient_error(error: Exception) -> bool:
+    """서버가 잠깐 바쁜 오류(503 등). 잠시 뒤에 다시 하면 되는 오류."""
+    if _error_code(error) in (500, 503, 504):
+        return True
+    text = str(error).lower()
+    return any(marker in text for marker in TRANSIENT_MARKERS)
+
+
+def check_model(model: str, api_key_env: str = "GEMINI_API_KEY") -> str:
+    """영상 분석 전에 모델 이름이 동작하는지 짧은 텍스트 호출로 확인한다."""
+    from google import genai
+
+    api_key = os.environ.get(api_key_env)
+    if not api_key:
+        raise RuntimeError(f"환경 변수 {api_key_env}가 없습니다.")
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(model=model, contents="한 단어로만 답하세요: 안녕")
+    return response.text.strip()
+
+
+def analyze_video(path: Path, model: str, api_key_env: str = "GEMINI_API_KEY") -> dict:
+    """영상을 업로드하고 분석한 뒤 업로드 파일을 지운다."""
+    from google import genai
+    from google.genai import types
+
+    api_key = os.environ.get(api_key_env)
+    if not api_key:
+        raise RuntimeError(f"환경 변수 {api_key_env}가 없습니다.")
+
+    client = genai.Client(api_key=api_key)
+    uploaded = client.files.upload(file=str(path))
+    try:
+        # 업로드 직후에는 PROCESSING 상태이므로 ACTIVE가 될 때까지 기다린다.
+        while uploaded.state.name == "PROCESSING":
+            time.sleep(5)
+            uploaded = client.files.get(name=uploaded.name)
+        if uploaded.state.name != "ACTIVE":
+            raise RuntimeError(f"업로드 처리 실패: {uploaded.state.name}")
+
+        response = client.models.generate_content(
+            model=model,
+            contents=[uploaded, PROMPT],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=RESPONSE_SCHEMA,
+            ),
+        )
+        raw = json.loads(response.text)
+    finally:
+        client.files.delete(name=uploaded.name)
+
+    return validate_tags(raw)
 def check_model(model: str, api_key_env: str = "GEMINI_API_KEY") -> str:
     """영상 분석 전에 모델 이름이 동작하는지 짧은 텍스트 호출로 확인한다."""
     from google import genai

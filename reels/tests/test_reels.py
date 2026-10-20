@@ -613,13 +613,18 @@ class ProxyTests(unittest.TestCase):
 
 
 class TaggerTests(unittest.TestCase):
-    def test_quota_errors_are_detected(self):
+    def test_stop_and_transient_errors_are_separated(self):
         class ApiError(Exception):
-            code = 429
+            def __init__(self, code, message):
+                super().__init__(message)
+                self.code = code
 
-        self.assertTrue(tagger.is_quota_error(ApiError("busy")))
-        self.assertTrue(tagger.is_quota_error(RuntimeError("RESOURCE_EXHAUSTED: quota exceeded")))
-        self.assertFalse(tagger.is_quota_error(RuntimeError("file upload failed")))
+        self.assertTrue(tagger.is_stop_error(ApiError(429, "busy")))
+        self.assertTrue(tagger.is_stop_error(RuntimeError("Prepay credits depleted")))
+        self.assertFalse(tagger.is_stop_error(ApiError(503, "high demand")))
+        self.assertTrue(tagger.is_transient_error(ApiError(503, "This model is currently experiencing high demand")))
+        self.assertTrue(tagger.is_transient_error(RuntimeError("503 UNAVAILABLE")))
+        self.assertFalse(tagger.is_transient_error(RuntimeError("file upload failed")))
 
     def test_valid_tags_pass_through(self):
         tags = tagger.validate_tags({"bag_type": "백팩", "person": "사람_없음", "shot": "제품_클로즈업",

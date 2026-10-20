@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -179,6 +180,18 @@ def cmd_proxy(args: argparse.Namespace) -> None:
             print(f"  사본 실패(원본 유지): {src.name} / {error}")
 
 
+def analyze_with_retry(path: Path, model: str, attempts: int = 3, wait_seconds: int = 60) -> dict:
+    """서버 혼잡(503 등)이면 잠시 기다렸다가 다시 시도한다. 결제 문제는 바로 올린다."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return tagger.analyze_video(path, model=model)
+        except Exception as error:
+            if not tagger.is_transient_error(error) or attempt == attempts:
+                raise
+            print(f"  서버가 바쁩니다. {wait_seconds}초 뒤 다시 시도합니다 ({attempt}/{attempts - 1})")
+            time.sleep(wait_seconds)
+
+
 def cmd_log(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
@@ -195,14 +208,14 @@ def cmd_log(args: argparse.Namespace) -> None:
         if not path.exists():
             path = library_file
         try:
-            tags = tagger.analyze_video(path, model=config["gemini_model"])
+            tags = analyze_with_retry(path, config["gemini_model"])
             record = {"file": str(library_file), "status": "tagged", **tags,
                       "orientation": media_info.orientation_of(library_file)}
             print(f"  태깅 완료: {library_file.name} / {tags['bag_type']} / {tags['person']}")
         except Exception as error:  # 실패해도 기록을 남겨 다음에 다시 시도할 수 있게 한다.
-            if tagger.is_quota_error(error):
-                print(f"  한도 도달로 멈춤: {error}")
-                print("  남은 영상은 다음에 'log'를 실행하면 이어서 처리합니다.")
+            if tagger.is_stop_error(error) or tagger.is_transient_error(error):
+                print(f"  멈춤: {error}")
+                print("  이 영상은 실패로 기록하지 않았습니다. 원인을 해결한 뒤 'log'를 다시 실행하면 이어서 처리합니다.")
                 return
             record = {
                 "file": str(library_file),
