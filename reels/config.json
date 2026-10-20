@@ -28,5 +28,15 @@
     ".cr3",
     ".nef",
     ".arw"
-  ]
+  ],
+  "subtitle": {
+    "provisional": true,
+    "font": "Apple SD Gothic Neo",
+    "font_size": 44,
+    "frame_width": 1080,
+    "side_margin": 80,
+    "bottom_margin": 260,
+    "char_width_factor": 1.0,
+    "max_lines": 2
+  }
 }

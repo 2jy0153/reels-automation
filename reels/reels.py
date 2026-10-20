@@ -327,7 +327,9 @@ def cmd_srt(args: argparse.Namespace) -> None:
     timeline = subtitles.load_timeline(voice_dir)
     out = folder / "subtitles" / f"{args.reel_id}.srt"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(subtitles.build_srt(timeline), encoding="utf-8")
+    style = config["subtitle"]
+    out.write_text(subtitles.build_srt(timeline, style), encoding="utf-8")
+    print(f"자막 한 줄 최대 {subtitles.chars_per_line(style)}자, 블록 최대 {subtitles.max_chars_per_cue(style)}자 (임시 디자인 값)")
     print(f"자막 저장: {out} ({len(timeline)}개)")
 
 

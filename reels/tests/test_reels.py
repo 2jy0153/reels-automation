@@ -279,6 +279,43 @@ class OrientationTests(unittest.TestCase):
         self.assertEqual(media_info.orientation_label(1920, 1080, 90), "세로")
 
 
+STYLE = {"provisional": True, "font": "Apple SD Gothic Neo", "font_size": 44, "frame_width": 1080,
+         "side_margin": 80, "bottom_margin": 260, "char_width_factor": 1.0, "max_lines": 2}
+
+
+class SubtitleTests(unittest.TestCase):
+    def test_limits_follow_the_design_settings(self):
+        import subtitles as subtitles_mod
+
+        self.assertEqual(subtitles_mod.chars_per_line(STYLE), 20)
+        self.assertEqual(subtitles_mod.max_chars_per_cue(STYLE), 40)
+        bigger = dict(STYLE, font_size=60)
+        self.assertLess(subtitles_mod.chars_per_line(bigger), 20)
+
+    def test_cues_split_at_meaning_boundaries_and_stay_within_limit(self):
+        import subtitles as subtitles_mod
+
+        narration = "크로스나 숄더백 메면 한쪽 어깨만 계속 눌리잖아요? 예전엔 그냥 한쪽 어깨만 아프다 수준이었는데, 이제는 허리까지 아프더라고요."
+        timeline = [{"no": 1, "start": 0.0, "end": 9.0, "narration": narration}]
+        items = subtitles_mod.cues(timeline, STYLE)
+        self.assertGreater(len(items), 1)
+        self.assertTrue(items[0][2].endswith("?"))  # 질문에서 끊긴다
+        for start, end, text in items:
+            self.assertLessEqual(len(text.replace(" ", "")), 40)
+            self.assertLess(start, end)
+        self.assertEqual(items[0][0], 0.0)
+        self.assertEqual(items[-1][1], 9.0)
+
+    def test_pause_is_not_inside_a_cue(self):
+        import subtitles as subtitles_mod
+
+        timeline = [{"no": 1, "start": 0.0, "end": 2.0, "narration": "가나다."},
+                    {"no": 2, "start": 2.3, "end": 4.0, "narration": "라마바."}]
+        items = subtitles_mod.cues(timeline, STYLE)
+        self.assertEqual(items[0][:2], (0.0, 2.0))
+        self.assertEqual(items[1][:2], (2.3, 4.0))
+
+
 class VoiceTests(unittest.TestCase):
     LINES = [
         {"no": 1, "target_start": 0, "target_end": 3, "narration": "첫 문장."},
