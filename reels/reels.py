@@ -5,7 +5,8 @@
   ingest --yes                INBOX 영상을 FOOTAGE로 옮기고 중복을 걸러낸다
   script import <파일>         대본(.md/.txt)을 대본 JSON으로 바꾸고 검사한다
   script check <JSON 파일>     대본 JSON을 다시 검사한다
-  log [--limit N]             FOOTAGE 영상을 Gemini로 분석해 태그를 저장한다 (태깅 안 된 것만)
+  proxy                       FOOTAGE 영상의 720p 분석용 사본을 PROXY에 만든다 (있으면 건너뜀)
+  log [--limit N]             사본(없으면 원본)을 Gemini로 분석해 태그를 저장한다 (태깅 안 된 것만)
   check                       Gemini 모델이 동작하는지 확인한다
 """
 
@@ -20,6 +21,7 @@ sys.path.insert(0, str(HERE))
 import clip_index  # noqa: E402
 import common  # noqa: E402
 import ingest  # noqa: E402
+import proxy  # noqa: E402
 import script  # noqa: E402
 import tagger  # noqa: E402
 
@@ -98,6 +100,24 @@ def cmd_script_check(args: argparse.Namespace) -> None:
     print_script_report(errors, warnings)
 
 
+def cmd_proxy(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    videos = sorted(p for p in layout["footage"].rglob("*") if ingest.is_video(p, config["video_exts"]))
+    todo = [(src, proxy.proxy_path(src, layout["footage"], layout["proxy"])) for src in videos]
+    todo = [(src, dst) for src, dst in todo if not dst.exists()]
+    if not todo:
+        print("만들 사본이 없습니다.")
+        return
+    print(f"사본 생성 대상 {len(todo)}개 ({config['proxy_height']}p)")
+    for src, dst in todo:
+        try:
+            proxy.make_proxy(src, dst, config["proxy_height"])
+            print(f"  사본 완료: {dst.parent.name}/{dst.name}")
+        except Exception as error:
+            print(f"  사본 실패(원본 유지): {src.name} / {error}")
+
+
 def cmd_log(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
@@ -108,22 +128,26 @@ def cmd_log(args: argparse.Namespace) -> None:
         print("태깅할 클립이 없습니다.")
         return
     print(f"태깅 대상 {len(pending)}개")
-    for path in pending:
+    for footage_file in pending:
+        # 원본 대신 사본을 올려 업로드 시간과 비용을 줄인다. 사본이 없으면 원본을 쓴다.
+        path = proxy.proxy_path(footage_file, layout["footage"], layout["proxy"])
+        if not path.exists():
+            path = footage_file
         try:
             tags = tagger.analyze_video(path, model=config["gemini_model"])
-            record = {"file": str(path), "status": "tagged", **tags}
-            print(f"  태깅 완료: {path.name} / {tags['bag_type']} / {tags['person']}")
+            record = {"file": str(footage_file), "status": "tagged", **tags}
+            print(f"  태깅 완료: {footage_file.name} / {tags['bag_type']} / {tags['person']}")
         except Exception as error:  # 실패해도 기록을 남겨 다음에 다시 시도할 수 있게 한다.
             record = {
-                "file": str(path),
+                "file": str(footage_file),
                 "status": "tag_failed",
                 "error": str(error)[:300],
                 "bag_type": tagger.UNKNOWN,
                 "person": tagger.UNKNOWN,
                 "needs_review": True,
             }
-            print(f"  태깅 실패: {path.name} / {error}")
-        clip_index.upsert_clip(layout["index"], path.stem, record)
+            print(f"  태깅 실패: {footage_file.name} / {error}")
+        clip_index.upsert_clip(layout["index"], footage_file.stem, record)
 
 
 def cmd_check(args: argparse.Namespace) -> None:
@@ -153,6 +177,8 @@ def main() -> None:
     check_p = script_sub.add_parser("check", help="대본 JSON 검사")
     check_p.add_argument("file")
     check_p.set_defaults(func=cmd_script_check)
+
+    sub.add_parser("proxy", help="분석용 720p 사본 만들기").set_defaults(func=cmd_proxy)
 
     log_p = sub.add_parser("log", help="영상 태깅 (Gemini)")
     log_p.add_argument("--limit", type=int, help="이번에 처리할 최대 개수 (처음 시험할 때 권장: 2)")

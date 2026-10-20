@@ -1,6 +1,7 @@
 {
   "source_root": "/Volumes/SSD 1TB/SOURCE_LIBRARY",
   "video_exts": [".mp4", ".mov", ".mxf", ".mts", ".m4v"],
+  "proxy_height": 720,
   "gemini_model": "gemini-2.5-flash",
   "elevenlabs_voice_id": "",
   "pause_seconds": 0.3,

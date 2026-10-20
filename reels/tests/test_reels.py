@@ -166,6 +166,22 @@ class PendingClipTests(unittest.TestCase):
         self.assertEqual(len(reels_cli.pending_clips(videos, {}, 2)), 2)
 
 
+class ProxyTests(unittest.TestCase):
+    def test_proxy_mirrors_footage_date_folder(self):
+        import proxy as proxy_mod
+
+        src = Path("/ssd/FOOTAGE/2026-10-20/20261020_A001.mp4")
+        dst = proxy_mod.proxy_path(src, Path("/ssd/FOOTAGE"), Path("/ssd/PROXY"))
+        self.assertEqual(dst, Path("/ssd/PROXY/2026-10-20/20261020_A001.mp4"))
+
+    def test_ffmpeg_scales_to_height_and_keeps_aspect(self):
+        import proxy as proxy_mod
+
+        cmd = proxy_mod.ffmpeg_command(Path("in.mp4"), Path("out.mp4"), 720)
+        self.assertIn("scale=-2:720", cmd)
+        self.assertEqual(cmd[-1], "out.mp4")
+
+
 class TaggerTests(unittest.TestCase):
     def test_valid_tags_pass_through(self):
         tags = tagger.validate_tags({"bag_type": "백팩", "person": "사람_없음", "shot": "제품_클로즈업",
