@@ -49,6 +49,17 @@ SOURCE_LIBRARY/
 | INBOX 확인 (옮기지 않음) | `python3 reels/reels.py inbox` |
 | 정리 시작 | `python3 reels/reels.py ingest --yes` |
 | 대본을 JSON으로 변환·검사 | `python3 reels/reels.py script import <대본 파일> --id <릴스 ID>` |
+
+## 대본 형식
+
+대본 파일(`.md` 또는 `.txt`)은 두 형식을 모두 읽습니다.
+
+1. **표 형식**: `시간 | 화면 | 대사 | 화면 자막` 열이 있는 마크다운 표
+2. **일반 텍스트**:
+   - 시간 표시가 있으면 그대로 씁니다. 예: `0~3초 대사`, `[3~6] 대사`
+   - 시간 표시가 없으면 문단마다 한 줄로 보고, 글자 수로 예상 시간(초당 6자)을 잡습니다. 이 경우 검사 결과에 "예상 시간"이라고 표시됩니다.
+   - `자막:`, `화면:`, `대사:` 줄로 칸을 나눌 수 있습니다.
+   - `본문`, `썸네일` 섹션과 `#해시태그` 줄을 인식합니다.
 | 대본 JSON 다시 검사 | `python3 reels/reels.py script check <JSON 파일>` |
 | 나레이션 생성 (확인만) | `python3 reels/reels.py voice <릴스 ID>` |
 | 나레이션 생성 (실행) | `python3 reels/reels.py voice <릴스 ID> --yes` |

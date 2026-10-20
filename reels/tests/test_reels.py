@@ -197,9 +197,41 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(warnings, [])
 
-    def test_plain_text_without_table_is_rejected(self):
+    def test_empty_text_is_rejected(self):
         with self.assertRaises(ValueError):
-            script.parse_script("그냥 글입니다.", "x")
+            script.parse_script("   \n  ", "x")
+
+    def test_plain_text_with_time_markers(self):
+        text = "# 제목\n\n0~3초 첫 문장입니다.\n자막: 큰 글씨\n3~6초 둘째 문장인가요?\n\n본문\n가방 이야기\n\n썸네일\n첫 줄\n둘째 줄\n\n#백팩 #출근"
+        data = script.parse_script(text, "2026-10-21_test_01")
+        self.assertEqual(len(data["lines"]), 2)
+        self.assertEqual((data["lines"][1]["target_start"], data["lines"][1]["target_end"]), (3, 6))
+        self.assertEqual(data["lines"][0]["caption"], "큰 글씨")
+        self.assertFalse(data["timing_estimated"])
+        self.assertEqual(data["caption_body"], "가방 이야기")
+        self.assertEqual(data["thumbnail_texts"], ["첫 줄", "둘째 줄"])
+        self.assertIn("#백팩", data["hashtags"])
+        self.assertEqual(script.check_script(data), ([], []))
+
+    def test_plain_text_without_markers_estimates_timing(self):
+        text = "가나다라마바사아자차 카타파하.\n\n두 번째 문단입니다."
+        data = script.parse_script(text, "x")
+        self.assertEqual(len(data["lines"]), 2)
+        self.assertTrue(data["timing_estimated"])
+        self.assertEqual(data["lines"][0]["target_end"], 2)  # 10자 / 6자 ≈ 2초
+        errors, warnings = script.check_script(data)
+        self.assertEqual(errors, [])
+        self.assertTrue(any("예상" in w for w in warnings))
+
+    def test_plain_text_labels_for_visual_and_narration(self):
+        text = "0~4초\n화면: 옷장 앞\n대사: 백팩 이야기를 시작합니다."
+        data = script.parse_script(text, "x")
+        self.assertEqual(data["lines"][0]["visual"], "옷장 앞")
+        self.assertEqual(data["lines"][0]["narration"], "백팩 이야기를 시작합니다.")
+
+    def test_text_before_first_marker_is_rejected(self):
+        with self.assertRaises(ValueError):
+            script.parse_script("앞 내용\n0~3초 뒤 내용", "x")
 
     def test_end_before_start_is_error(self):
         errors, _ = script.check_script({"lines": [
