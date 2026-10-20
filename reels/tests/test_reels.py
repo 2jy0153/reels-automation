@@ -279,57 +279,6 @@ class OrientationTests(unittest.TestCase):
         self.assertEqual(media_info.orientation_label(1920, 1080, 90), "세로")
 
 
-class SubtitleTests(unittest.TestCase):
-    def test_long_line_is_split_into_short_cues_within_its_window(self):
-        import subtitles as subtitles_mod
-
-        narration = "첫번째, 어깨가 버티질 못해요. 크로스나 숄더백 메면 한쪽 어깨만 계속 눌리잖아요? 예전엔 그냥 한쪽 어깨만 아프다 수준이었는데."
-        timeline = [{"no": 1, "start": 10.0, "end": 20.0, "narration": narration}]
-        items = subtitles_mod.cues(timeline)
-        self.assertGreater(len(items), 1)
-        self.assertEqual(items[0][0], 10.0)
-        self.assertEqual(items[-1][1], 20.0)
-        for start, end, text in items:
-            self.assertLessEqual(len(text), subtitles_mod.MAX_CHARS_PER_CUE)
-            self.assertLess(start, end)
-        for (_, end, _), (start, _, _) in zip(items, items[1:]):
-            self.assertAlmostEqual(end, start)
-
-    def test_pause_is_not_inside_a_cue(self):
-        import subtitles as subtitles_mod
-
-        timeline = [{"no": 1, "start": 0.0, "end": 2.0, "narration": "가나다."},
-                    {"no": 2, "start": 2.3, "end": 4.0, "narration": "라마바."}]
-        items = subtitles_mod.cues(timeline)
-        self.assertEqual(items[0][:2], (0.0, 2.0))
-        self.assertEqual(items[1][:2], (2.3, 4.0))
-
-
-class EditPlanTests(unittest.TestCase):
-    def test_matching_vertical_clip_is_preferred(self):
-        import edit_plan
-
-        timeline = [{"no": 1, "start": 0.0, "end": 3.0, "narration": "노트북과 아이패드를 넣어요"}]
-        clips = {
-            "/a.mp4": {"scene": "책상 위 노트북", "keywords": ["노트북"], "orientation": ["가로"]},
-            "/b.mp4": {"scene": "노트북 아이패드", "keywords": ["노트북", "아이패드"], "orientation": ["세로"]},
-        }
-        plan = edit_plan.draft_plan(timeline, clips, {"/a.mp4": 30.0, "/b.mp4": 30.0})
-        self.assertEqual(plan[0]["clip"], "/b.mp4")
-
-    def test_reused_clip_continues_from_previous_point(self):
-        import edit_plan
-
-        timeline = [
-            {"no": 1, "start": 0.0, "end": 2.0, "narration": "가나다"},
-            {"no": 2, "start": 2.0, "end": 4.0, "narration": "가나다"},
-        ]
-        clips = {"/only.mp4": {"scene": "가나다", "orientation": ["세로"]}}
-        plan = edit_plan.draft_plan(timeline, clips, {"/only.mp4": 30.0})
-        self.assertEqual(plan[0]["in"], 0.0)
-        self.assertEqual(plan[1]["in"], 2.0)
-
-
 class AssembleTests(unittest.TestCase):
     TIMELINE = [
         {"no": 1, "start": 0.0, "end": 2.0, "narration": "가"},

@@ -24,7 +24,6 @@ sys.path.insert(0, str(HERE))
 import clip_index  # noqa: E402
 import media_info  # noqa: E402
 import assemble  # noqa: E402
-import edit_plan  # noqa: E402
 import common  # noqa: E402
 import ingest  # noqa: E402
 import organize  # noqa: E402
@@ -353,31 +352,6 @@ def cmd_orient(args: argparse.Namespace) -> None:
         print(f"  {path.name}: {' → '.join(labels) or '알 수 없음'}")
 
 
-def cmd_plan_draft(args: argparse.Namespace) -> None:
-    config = common.load_config()
-    layout = common.make_layout(common.resolve_root(config))
-    folder = layout["reels"] / args.reel_id
-    timeline_path = folder / "voice" / "timeline.json"
-    if not timeline_path.exists():
-        raise SystemExit("timeline.json이 없습니다. 먼저 'voice <ID> --speed 값'을 실행하세요.")
-    timeline = json.loads(timeline_path.read_text(encoding="utf-8"))["lines"]
-    clips = {
-        record["file"]: record
-        for record in clip_index.load_clips(layout["index"]).values()
-        if record.get("status") == "tagged" and Path(record.get("file", "")).exists()
-    }
-    if not clips:
-        raise SystemExit("태깅된 영상이 없습니다. 먼저 'log'를 실행하세요.")
-    durations = {path: voice.duration(Path(path)) for path in clips}
-    plan = edit_plan.draft_plan(timeline, clips, durations)
-    out = folder / "edit" / "plan.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"편집 계획 초안 저장: {out} (문단 {len(plan)}개). 검토 후 'assemble {args.reel_id}'를 실행하세요.")
-    for item in plan:
-        print(f"  {item['no']:02d}번 → {Path(item['clip']).name} (시작 {item['in']}초, {item['note']})")
-
-
 def cmd_assemble(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
@@ -458,10 +432,6 @@ def main() -> None:
     split_p.add_argument("--yes", action="store_true", help="확인 후 실제로 저장")
     split_p.add_argument("--force", action="store_true", help="raw 폴더의 기존 음성을 덮어씀")
     split_p.set_defaults(func=cmd_split_voice)
-
-    plan_p = sub.add_parser("plan-draft", help="태그와 대본으로 편집 계획 초안 만들기")
-    plan_p.add_argument("reel_id")
-    plan_p.set_defaults(func=cmd_plan_draft)
 
     assemble_p = sub.add_parser("assemble", help="편집 계획으로 프리미어 타임라인(XML) 만들기")
     assemble_p.add_argument("reel_id")
