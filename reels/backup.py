@@ -24,11 +24,16 @@ def finals(reels_dir: Path) -> list[Path]:
 
 
 def target_for(drive_dir: Path, source: Path) -> Path:
-    """백업 폴더 안에 하위 폴더 없이 파일만 둔다. 같은 이름이 다른 크기로 있으면 릴스 ID를 앞에 붙인다."""
-    candidate = drive_dir / source.name
-    if candidate.exists() and candidate.stat().st_size != source.stat().st_size:
-        candidate = drive_dir / f"{source.parent.parent.name}_{source.name}"
-    return candidate
+    """백업 폴더 안에 하위 폴더 없이 파일만 둔다.
+    같은 이름이 이미 있고 내용(크기)이 다르면 뒤에 (2), (3)을 붙인다.
+    크기가 같은 파일이 이미 있으면 같은 파일로 보고 그 자리를 쓴다(다시 복사하지 않는다)."""
+    number = 1
+    while True:
+        name = source.name if number == 1 else f"{source.stem} ({number}){source.suffix}"
+        candidate = drive_dir / name
+        if not candidate.exists() or candidate.stat().st_size == source.stat().st_size:
+            return candidate
+        number += 1
 
 
 def needs_copy(source: Path, target: Path) -> bool:
