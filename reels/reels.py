@@ -366,17 +366,16 @@ def cmd_plan_draft(args: argparse.Namespace) -> None:
         for record in clip_index.load_clips(layout["index"]).values()
         if record.get("status") == "tagged" and Path(record.get("file", "")).exists()
     }
-    out = folder / "edit" / "plan.json"
-    existing = json.loads(out.read_text(encoding="utf-8")) if out.exists() else None
+    if not clips:
+        raise SystemExit("태깅된 영상이 없습니다. 먼저 'log'를 실행하세요.")
     durations = {path: voice.duration(Path(path)) for path in clips}
-    plan = edit_plan.draft_plan(timeline, clips, durations, existing)
+    plan = edit_plan.draft_plan(timeline, clips, durations)
+    out = folder / "edit" / "plan.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
-    empty = sum(1 for item in plan if not item.get("clip"))
-    print(f"편집 계획 저장: {out} (문단 {len(plan)}개, 영상 미정 {empty}개)")
+    print(f"편집 계획 초안 저장: {out} (문단 {len(plan)}개). 검토 후 'assemble {args.reel_id}'를 실행하세요.")
     for item in plan:
-        target = Path(item["clip"]).name if item.get("clip") else "영상 미정"
-        print(f"  {item['no']:02d}번 → {target} ({item['note']})")
+        print(f"  {item['no']:02d}번 → {Path(item['clip']).name} (시작 {item['in']}초, {item['note']})")
 
 
 def cmd_assemble(args: argparse.Namespace) -> None:
@@ -394,7 +393,7 @@ def cmd_assemble(args: argparse.Namespace) -> None:
     missing = [path for path in narration if not Path(path).exists()]
     if missing:
         raise SystemExit(f"음성 파일이 없습니다: {missing[0]} 외 {len(missing) - 1}개")
-    clips = sorted({item["clip"] for item in plan if item.get("clip")})
+    clips = sorted({item["clip"] for item in plan})
     not_found = [clip for clip in clips if not Path(clip).exists()]
     if not_found:
         raise SystemExit(f"영상 파일을 찾을 수 없습니다: {not_found[0]} 외 {len(not_found) - 1}개")
