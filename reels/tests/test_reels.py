@@ -150,6 +150,22 @@ class ScriptTests(unittest.TestCase):
         self.assertTrue(errors)
 
 
+class PendingClipTests(unittest.TestCase):
+    def test_tagged_clips_are_skipped_and_failed_ones_retried(self):
+        import reels as reels_cli
+
+        videos = [Path("a.mp4"), Path("b.mp4"), Path("c.mp4")]
+        clips = {"a": {"status": "tagged"}, "b": {"status": "tag_failed"}}
+        pending = reels_cli.pending_clips(videos, clips, None)
+        self.assertEqual([p.name for p in pending], ["b.mp4", "c.mp4"])
+
+    def test_limit_caps_the_batch(self):
+        import reels as reels_cli
+
+        videos = [Path(f"{i}.mp4") for i in range(5)]
+        self.assertEqual(len(reels_cli.pending_clips(videos, {}, 2)), 2)
+
+
 class TaggerTests(unittest.TestCase):
     def test_valid_tags_pass_through(self):
         tags = tagger.validate_tags({"bag_type": "백팩", "person": "사람_없음", "shot": "제품_클로즈업",

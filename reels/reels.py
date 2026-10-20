@@ -5,6 +5,7 @@
   ingest --yes                INBOX 영상을 FOOTAGE로 옮기고 중복을 걸러낸다
   script import <파일>         대본(.md/.txt)을 대본 JSON으로 바꾸고 검사한다
   script check <JSON 파일>     대본 JSON을 다시 검사한다
+  log [--limit N]             FOOTAGE 영상을 Gemini로 분석해 태그를 저장한다 (태깅 안 된 것만)
   check                       Gemini 모델이 동작하는지 확인한다
 """
 
@@ -16,9 +17,17 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import clip_index  # noqa: E402
 import common  # noqa: E402
 import ingest  # noqa: E402
 import script  # noqa: E402
+import tagger  # noqa: E402
+
+
+def pending_clips(videos: list[Path], clips: dict, limit: int | None) -> list[Path]:
+    """아직 태깅이 성공하지 않은 영상만 고른다. 실패한 것은 다시 시도한다."""
+    pending = [path for path in videos if clips.get(path.stem, {}).get("status") != "tagged"]
+    return pending[:limit] if limit else pending
 
 
 def print_script_report(errors: list[str], warnings: list[str]) -> None:
@@ -89,6 +98,34 @@ def cmd_script_check(args: argparse.Namespace) -> None:
     print_script_report(errors, warnings)
 
 
+def cmd_log(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    videos = sorted(p for p in layout["footage"].rglob("*") if ingest.is_video(p, config["video_exts"]))
+    clips = clip_index.load_clips(layout["index"])
+    pending = pending_clips(videos, clips, args.limit)
+    if not pending:
+        print("태깅할 클립이 없습니다.")
+        return
+    print(f"태깅 대상 {len(pending)}개")
+    for path in pending:
+        try:
+            tags = tagger.analyze_video(path, model=config["gemini_model"])
+            record = {"file": str(path), "status": "tagged", **tags}
+            print(f"  태깅 완료: {path.name} / {tags['bag_type']} / {tags['person']}")
+        except Exception as error:  # 실패해도 기록을 남겨 다음에 다시 시도할 수 있게 한다.
+            record = {
+                "file": str(path),
+                "status": "tag_failed",
+                "error": str(error)[:300],
+                "bag_type": tagger.UNKNOWN,
+                "person": tagger.UNKNOWN,
+                "needs_review": True,
+            }
+            print(f"  태깅 실패: {path.name} / {error}")
+        clip_index.upsert_clip(layout["index"], path.stem, record)
+
+
 def cmd_check(args: argparse.Namespace) -> None:
     import tagger
 
@@ -116,6 +153,10 @@ def main() -> None:
     check_p = script_sub.add_parser("check", help="대본 JSON 검사")
     check_p.add_argument("file")
     check_p.set_defaults(func=cmd_script_check)
+
+    log_p = sub.add_parser("log", help="영상 태깅 (Gemini)")
+    log_p.add_argument("--limit", type=int, help="이번에 처리할 최대 개수 (처음 시험할 때 권장: 2)")
+    log_p.set_defaults(func=cmd_log)
 
     sub.add_parser("check", help="Gemini 모델 확인").set_defaults(func=cmd_check)
 
