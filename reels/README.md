@@ -50,6 +50,8 @@ SOURCE_LIBRARY/
 | 정리 시작 | `python3 reels/reels.py ingest --yes` |
 | 대본을 JSON으로 변환·검사 | `python3 reels/reels.py script import <대본 파일> --id <릴스 ID>` |
 | 대본 JSON 다시 검사 | `python3 reels/reels.py script check <JSON 파일>` |
+| 나레이션 생성 (확인만) | `python3 reels/reels.py voice <릴스 ID>` |
+| 나레이션 생성 (실행) | `python3 reels/reels.py voice <릴스 ID> --yes` |
 | Gemini 모델 확인 | `python3 reels/reels.py check` |
 
 ## 흐름
@@ -58,6 +60,14 @@ SOURCE_LIBRARY/
 2. "넣었어"라고 말하면 Claude가 `inbox`로 목록을 보여 주고 "정리를 시작할까요?"라고 묻습니다.
 3. "시작해"라고 하면 `ingest --yes`를 실행합니다.
 4. 대본이 확정되면 파일을 보내고 `script import`로 JSON을 만듭니다.
+
+## 나레이션 (voice)
+
+- 대본 JSON의 줄마다 ElevenLabs로 음성을 만듭니다. 원본 음성은 `voice/raw/`에 저장합니다.
+- `config.json`의 `voice_speed`만큼 배속을 적용해 `voice/NN.mp3`를 만듭니다. 1.0이 원래 속도입니다.
+- 줄 사이 쉼은 `pause_seconds`(0.3초), 질문으로 끝나는 줄 뒤에는 `pause_after_question_seconds`(0.6초)입니다.
+- `voice/timeline.json`에 줄별 시작·끝 시간과 목표 시간이 기록됩니다.
+- 목소리는 `config.json`의 `elevenlabs_voice_id`에 넣어야 합니다. 비어 있으면 중단합니다.
 
 ## 설정
 

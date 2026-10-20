@@ -10,6 +10,8 @@
   "proxy_height": 720,
   "gemini_model": "gemini-3.8-flash",
   "elevenlabs_voice_id": "",
+  "elevenlabs_model": "eleven_multilingual_v2",
+  "voice_speed": 1.0,
   "pause_seconds": 0.3,
   "pause_after_question_seconds": 0.6,
   "target_luma": 115,

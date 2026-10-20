@@ -207,6 +207,47 @@ class ScriptTests(unittest.TestCase):
         self.assertTrue(errors)
 
 
+class VoiceTests(unittest.TestCase):
+    LINES = [
+        {"no": 1, "target_start": 0, "target_end": 3, "narration": "첫 문장."},
+        {"no": 2, "target_start": 3, "target_end": 5, "narration": "질문인가요?"},
+        {"no": 3, "target_start": 5, "target_end": 9, "narration": "마지막."},
+    ]
+
+    def test_timeline_adds_pauses_and_question_pause(self):
+        import voice as voice_mod
+
+        timeline = voice_mod.build_timeline(self.LINES, [2.0, 1.5, 3.0], 0.3, 0.6)
+        self.assertEqual(timeline[0]["start"], 0.0)
+        self.assertEqual(timeline[0]["end"], 2.0)
+        self.assertEqual(timeline[1]["start"], 2.3)   # 0.3초 쉼
+        self.assertEqual(timeline[1]["pause_after"], 0.6)  # 질문 뒤 0.6초
+        self.assertEqual(timeline[2]["start"], 4.4)   # 1.5초 + 0.6초 쉼 뒤
+        self.assertEqual(timeline[2]["pause_after"], 0.0)  # 마지막 줄 뒤에는 쉼 없음
+
+    def test_speed_command_uses_atempo(self):
+        import voice as voice_mod
+
+        cmd = voice_mod.speed_command(Path("raw.mp3"), Path("out.mp3"), 1.1)
+        self.assertIn("atempo=1.1", cmd)
+
+    def test_synthesize_sends_text_model_and_key(self):
+        from unittest import mock
+
+        import voice as voice_mod
+
+        response = mock.MagicMock()
+        response.read.return_value = b"mp3-bytes"
+        response.__enter__.return_value = response
+        with mock.patch.object(voice_mod.urllib.request, "urlopen", return_value=response) as opened:
+            audio = voice_mod.synthesize("안녕하세요", "VOICE1", "eleven_multilingual_v2", "KEY")
+        request = opened.call_args.args[0]
+        self.assertEqual(audio, b"mp3-bytes")
+        self.assertIn("/VOICE1", request.full_url)
+        self.assertEqual(request.get_header("Xi-api-key"), "KEY")
+        self.assertIn("eleven_multilingual_v2", request.data.decode("utf-8"))
+
+
 class PendingClipTests(unittest.TestCase):
     def test_tagged_clips_are_skipped_and_failed_ones_retried(self):
         import reels as reels_cli

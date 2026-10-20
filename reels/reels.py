@@ -13,6 +13,8 @@
 
 import argparse
 import json
+import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -26,6 +28,7 @@ import organize  # noqa: E402
 import proxy  # noqa: E402
 import script  # noqa: E402
 import tagger  # noqa: E402
+import voice  # noqa: E402
 
 
 def pending_clips(videos: list[Path], clips: dict, limit: int | None) -> list[Path]:
@@ -186,6 +189,50 @@ def cmd_log(args: argparse.Namespace) -> None:
         clip_index.upsert_clip(layout["index"], library_file.stem, record)
 
 
+def cmd_voice(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    folder = layout["reels"] / args.reel_id
+    script_path = folder / "script" / f"{args.reel_id}.json"
+    if not script_path.exists():
+        raise SystemExit(f"대본 JSON이 없습니다. 먼저 'script import'를 실행하세요: {script_path}")
+    data = json.loads(script_path.read_text(encoding="utf-8"))
+    lines = data["lines"]
+    chars = sum(len(line["narration"]) for line in lines)
+    print(f"나레이션 대상 {len(lines)}줄, 총 {chars}자 (목소리 {config['elevenlabs_voice_id'] or '미설정'}, 배속 {config['voice_speed']})")
+    if not args.yes:
+        print("아직 아무것도 만들지 않았습니다. 진행하려면 'voice --yes'를 실행하세요.")
+        return
+    if not config["elevenlabs_voice_id"]:
+        raise SystemExit("config.json의 elevenlabs_voice_id가 비어 있습니다. 목소리 ID를 넣은 뒤 다시 실행하세요.")
+    api_key = os.environ.get("ELEVENLABS_API_KEY")
+    if not api_key:
+        raise SystemExit("reels/.env에 ELEVENLABS_API_KEY가 없습니다.")
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        raise SystemExit("ffmpeg/ffprobe가 설치되어 있지 않습니다.")
+
+    voice_dir = folder / "voice"
+    raw_dir = voice_dir / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    durations = []
+    for line in lines:
+        name = f"{line['no']:02d}.mp3"
+        raw_path, final_path = raw_dir / name, voice_dir / name
+        if not raw_path.exists():
+            print(f"  음성 생성: {line['no']}번")
+            raw_path.write_bytes(voice.synthesize(line["narration"], config["elevenlabs_voice_id"],
+                                                  config["elevenlabs_model"], api_key))
+        if not final_path.exists() or args.force:
+            voice.apply_speed(raw_path, final_path, config["voice_speed"])
+        durations.append(voice.duration(final_path))
+
+    timeline = voice.build_timeline(lines, durations, config["pause_seconds"], config["pause_after_question_seconds"])
+    voice.write_timeline(voice_dir, timeline)
+    for item in timeline:
+        print(f"  {item['no']}번: 실제 {item['duration']}초 / 목표 {item['target_duration']}초, 다음 줄까지 쉼 {item['pause_after']}초")
+    print(f"타임라인 저장: {voice_dir / voice.TIMELINE}")
+
+
 def cmd_check(args: argparse.Namespace) -> None:
     config = common.load_config()
     reply = tagger.check_model(config["gemini_model"])
@@ -221,6 +268,12 @@ def main() -> None:
     log_p = sub.add_parser("log", help="영상 태깅 (Gemini)")
     log_p.add_argument("--limit", type=int, help="이번에 처리할 최대 개수 (처음 시험할 때 권장: 2)")
     log_p.set_defaults(func=cmd_log)
+
+    voice_p = sub.add_parser("voice", help="대본으로 나레이션 생성 (ElevenLabs)")
+    voice_p.add_argument("reel_id", help="릴스 ID (예: 2026-10-19_backpack_02)")
+    voice_p.add_argument("--yes", action="store_true", help="확인 후 실제로 생성")
+    voice_p.add_argument("--force", action="store_true", help="배속 음성을 다시 만듦 (원본 음성은 재사용)")
+    voice_p.set_defaults(func=cmd_voice)
 
     sub.add_parser("check", help="Gemini 모델 확인").set_defaults(func=cmd_check)
 
