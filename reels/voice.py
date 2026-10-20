@@ -92,3 +92,56 @@ def write_timeline(voice_dir: Path, speed: float, timeline: list[dict]) -> None:
     temp = voice_dir / f".{TIMELINE}.tmp"
     temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(temp, voice_dir / TIMELINE)
+
+
+SILENCE_DB = -35
+SILENCE_SECONDS = 0.3
+
+
+def detect_silences(path: Path, noise_db: int = SILENCE_DB, min_silence: float = SILENCE_SECONDS) -> list[tuple[float, float]]:
+    """ffmpeg의 silencedetect로 무음 구간 (시작, 끝) 목록을 찾는다."""
+    import re
+
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
+         "-af", f"silencedetect=noise={noise_db}dB:d={min_silence}", "-f", "null", "-"],
+        capture_output=True, text=True, check=True,
+    )
+    starts = [float(value) for value in re.findall(r"silence_start: ([\d.]+)", result.stderr)]
+    ends = [float(value) for value in re.findall(r"silence_end: ([\d.]+)", result.stderr)]
+    return list(zip(starts, ends))  # 끝까지 이어진 무음은 끝이 없어 제외된다
+
+
+def choose_cuts(silences: list[tuple[float, float]], count: int) -> list[tuple[float, float]]:
+    """문단 수에서 한 개 적은 수만큼, 가장 긴 무음 구간을 자를 자리로 고른다."""
+    needed = count - 1
+    if len(silences) < needed:
+        raise ValueError(f"무음 구간이 {len(silences)}개뿐이라 {count}개 문단으로 나눌 수 없습니다. "
+                         "문단 사이 쉼을 늘려 다시 만들거나 자르는 자리를 직접 정해 주세요.")
+    longest = sorted(silences, key=lambda s: s[1] - s[0], reverse=True)[:needed]
+    return sorted(longest)
+
+
+def segments_from_cuts(total: float, cuts: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    segments = []
+    previous_end = 0.0
+    for cut_start, cut_end in cuts:
+        segments.append((previous_end, cut_start))
+        previous_end = cut_end
+    segments.append((previous_end, total))
+    return segments
+
+
+def cut_audio(src: Path, dst: Path, start: float, end: float) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    temp = dst.parent / f".{dst.name}.partial.mp3"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
+             "-ss", f"{start:.3f}", "-to", f"{end:.3f}", "-c:a", "libmp3lame", "-q:a", "2", str(temp)],
+            check=True,
+        )
+        os.replace(temp, dst)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise

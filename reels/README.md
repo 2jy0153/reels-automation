@@ -82,6 +82,12 @@ SOURCE_LIBRARY/
 
 목소리는 `config.json`의 `elevenlabs_voice_id`에 넣어야 합니다. 비어 있으면 원본 음성 생성 단계에서 중단합니다.
 
+## 음성 자르기와 자막 (split-voice, srt)
+
+- `split-voice <ID>`: `voice` 폴더의 전체 음성 mp3 하나를 대본 문단 수만큼 나눕니다. 문단 사이에서 가장 긴 무음 구간을 자를 자리로 씁니다. 결과를 먼저 보여 주고, `--yes`를 붙여야 `voice/raw/NN.mp3`로 저장합니다.
+- 무음 구간 수가 문단 수보다 적으면 중단합니다. 캡컷에서 문단 사이 쉼을 늘려 다시 만들거나, 자를 위치를 직접 정해 주세요.
+- `srt <ID>`: `voice/timeline.json`의 실제 음성 시간으로 `subtitles/<ID>.srt`를 만듭니다. 자막 문구는 대사 전체입니다. 먼저 `voice <ID> --speed 값`을 실행해야 합니다.
+
 ## 설정
 
 - `reels/config.json`: 루트 경로, 영상 확장자, 나레이션 쉼 시간, 목표 밝기

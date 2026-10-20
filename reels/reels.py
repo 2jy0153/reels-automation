@@ -27,6 +27,7 @@ import ingest  # noqa: E402
 import organize  # noqa: E402
 import proxy  # noqa: E402
 import script  # noqa: E402
+import subtitles  # noqa: E402
 import tagger  # noqa: E402
 import voice  # noqa: E402
 
@@ -264,6 +265,63 @@ def cmd_voice(args: argparse.Namespace) -> None:
     print("음성을 들어 보고 다른 배속이 필요하면 'voice <ID> --speed 값'을 다시 실행하세요.")
 
 
+def cmd_split_voice(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    folder = layout["reels"] / args.reel_id
+    script_path = folder / "script" / f"{args.reel_id}.json"
+    if not script_path.exists():
+        raise SystemExit(f"대본 JSON이 없습니다: {script_path}")
+    lines = json.loads(script_path.read_text(encoding="utf-8"))["lines"]
+    voice_dir = folder / "voice"
+    raw_dir = voice_dir / "raw"
+
+    if args.file:
+        source = Path(args.file).expanduser()
+    else:
+        candidates = sorted(p for p in voice_dir.glob("*.mp3"))
+        if len(candidates) != 1:
+            raise SystemExit(f"voice 폴더에 mp3가 {len(candidates)}개 있습니다. 파일을 지정하세요: split-voice <ID> <파일>")
+        source = candidates[0]
+    if not source.exists():
+        raise SystemExit(f"음성 파일을 찾을 수 없습니다: {source}")
+    if shutil.which("ffmpeg") is None:
+        raise SystemExit("ffmpeg가 설치되어 있지 않습니다.")
+
+    total = voice.duration(source)
+    silences = voice.detect_silences(source)
+    try:
+        cuts = voice.choose_cuts(silences, len(lines))
+    except ValueError as error:
+        raise SystemExit(str(error))
+    segments = voice.segments_from_cuts(total, cuts)
+    print(f"원본 {source.name}: 총 {total:.2f}초, 무음 구간 {len(silences)}개, 문단 {len(lines)}개")
+    for line, (start, end) in zip(lines, segments):
+        print(f"  {line['no']:02d}번 {start:7.2f}초 ~ {end:7.2f}초 ({end - start:.2f}초): {line['narration'][:30]}")
+    if not args.yes:
+        print("아직 아무것도 저장하지 않았습니다. 확인 후 'split-voice <ID> --yes'를 실행하세요.")
+        return
+    if any((raw_dir / f"{line['no']:02d}.mp3").exists() for line in lines) and not args.force:
+        raise SystemExit("raw 폴더에 이미 음성이 있습니다. 덮어쓰려면 --force를 붙이세요.")
+    for line, (start, end) in zip(lines, segments):
+        voice.cut_audio(source, raw_dir / f"{line['no']:02d}.mp3", start, end)
+    print(f"저장 완료: {raw_dir} (문단 {len(lines)}개). 다음은 'voice <ID> --speed 값'입니다.")
+
+
+def cmd_srt(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    folder = layout["reels"] / args.reel_id
+    voice_dir = folder / "voice"
+    if not (voice_dir / "timeline.json").exists():
+        raise SystemExit("timeline.json이 없습니다. 먼저 'voice <ID> --speed 값'을 실행하세요.")
+    timeline = subtitles.load_timeline(voice_dir)
+    out = folder / "subtitles" / f"{args.reel_id}.srt"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(subtitles.build_srt(timeline), encoding="utf-8")
+    print(f"자막 저장: {out} ({len(timeline)}개)")
+
+
 def cmd_check(args: argparse.Namespace) -> None:
     config = common.load_config()
     reply = tagger.check_model(config["gemini_model"])
@@ -309,6 +367,17 @@ def main() -> None:
     voice_p.add_argument("--yes", action="store_true", help="원본 음성을 ElevenLabs로 만듦 (없는 것만)")
     voice_p.add_argument("--speed", type=float, help="배속을 정해 최종 음성과 타임라인을 다시 만듦 (예: 1.1)")
     voice_p.set_defaults(func=cmd_voice)
+
+    split_p = sub.add_parser("split-voice", help="전체 음성 mp3를 문단별로 자르기")
+    split_p.add_argument("reel_id")
+    split_p.add_argument("file", nargs="?", help="음성 파일 (생략하면 voice 폴더의 mp3 하나)")
+    split_p.add_argument("--yes", action="store_true", help="확인 후 실제로 저장")
+    split_p.add_argument("--force", action="store_true", help="raw 폴더의 기존 음성을 덮어씀")
+    split_p.set_defaults(func=cmd_split_voice)
+
+    srt_p = sub.add_parser("srt", help="타임라인으로 자막(SRT) 만들기")
+    srt_p.add_argument("reel_id")
+    srt_p.set_defaults(func=cmd_srt)
 
     sub.add_parser("check", help="Gemini 모델 확인").set_defaults(func=cmd_check)
 
