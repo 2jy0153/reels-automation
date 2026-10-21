@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import clip_index  # noqa: E402
+import handoff  # noqa: E402
 import ingest  # noqa: E402
 import script  # noqa: E402
 import tagger  # noqa: E402
@@ -241,6 +242,71 @@ class ScriptTests(unittest.TestCase):
         errors, _ = script.check_script({"lines": [
             {"no": 1, "target_start": 5, "target_end": 3, "narration": "가", "caption": None}]})
         self.assertTrue(errors)
+
+
+V3_DOC = """# ① 거치대 3개
+상태: 컨펌
+
+## 대본
+| 시간 | 장면 | 대사 | 역할 |
+|---|---|---|---|
+| 0~2.5초 | 저울 위 **천** | 셋 다 합쳐도 309g이에요. | 훅 |
+| 2.5~6초 | 서랍 속 거치대 | 하나면 될 줄 알았거든요. | 전개 |
+
+## 채울 것
+- [x] 3개 합친 무게 (실측)
+"""
+
+
+class HandoffTests(unittest.TestCase):
+    def parse(self, text):
+        return script.parse_script(text, "20261022_stand_01")
+
+    def test_v3_table_reads_scene_column_and_decimal_times(self):
+        data = self.parse(V3_DOC)
+        first = data["lines"][0]
+        self.assertEqual((first["target_start"], first["target_end"]), (0, 2.5))
+        self.assertEqual(first["visual"], "저울 위 천")
+        self.assertEqual(data["lines"][1]["narration"], "하나면 될 줄 알았거든요.")
+
+    def test_confirmed_doc_without_blanks_passes(self):
+        self.assertEqual(handoff.problems(V3_DOC, self.parse(V3_DOC)), [])
+
+    def test_missing_or_draft_status_stops(self):
+        for text in (V3_DOC.replace("상태: 컨펌\n", ""), V3_DOC.replace("컨펌", "기획중")):
+            found = handoff.problems(text, self.parse(text))
+            self.assertTrue(any("상태" in message for message in found))
+
+    def test_blanks_and_open_choices_and_todos_stop(self):
+        text = (V3_DOC.replace("309g", "[ ]g").replace("서랍 속", "[손잡이/숄더]")
+                .replace("- [x]", "- [ ]"))
+        found = handoff.problems(text, self.parse(text))
+        self.assertEqual(len(found), 3)
+        self.assertTrue(any("1번 대사" in message for message in found))
+        self.assertTrue(any("2번 장면" in message for message in found))
+        self.assertTrue(any("채울 것" in message for message in found))
+
+    def test_markdown_link_is_not_a_blank(self):
+        text = V3_DOC.replace("하나면", "[원칙](/a/b.md) 하나면")
+        self.assertEqual(handoff.problems(text, self.parse(text)), [])
+
+    def test_narration_column_named_subtitle_is_read(self):
+        text = V3_DOC.replace("| 시간 | 장면 | 대사 |", "| 시간 | 장면 | 자막 (= 목소리를 넣는다면 대사) |")
+        self.assertEqual(self.parse(text)["lines"][0]["narration"], "셋 다 합쳐도 309g이에요.")
+
+    def test_two_tables_need_a_choice(self):
+        start = V3_DOC.index("| 시간")
+        table = V3_DOC[start:V3_DOC.index("\n\n## 채울 것")]
+        text = V3_DOC + "\n## B안\n" + table.replace("309g", "310g") + "\n"
+        with self.assertRaises(ValueError):
+            self.parse(text)
+        data = script.parse_script(text, "x", table=2)
+        self.assertIn("310g", data["lines"][0]["narration"])
+
+    def test_shot_checklist_lists_every_scene(self):
+        sheet = handoff.shot_checklist(self.parse(V3_DOC))
+        self.assertIn("- [ ] 1. 0~2.5초 · 저울 위 천", sheet)
+        self.assertIn("- [ ] 2. 2.5~6초 · 서랍 속 거치대", sheet)
 
 
 class CutByTextTests(unittest.TestCase):
