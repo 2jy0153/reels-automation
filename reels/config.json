@@ -32,11 +32,11 @@
   "subtitle": {
     "provisional": false,
     "font": "Apple SD Gothic Neo SemiBold",
-    "font_size": 40,
+    "font_size": 44,
     "frame_width": 1080,
     "frame_height": 1920,
     "side_margin": 80,
-    "box_top_ratio": 0.27,
+    "box_top_ratio": 0.24,
     "char_width_factor": 1.0,
     "max_lines": 1,
     "max_chars": 21,
@@ -44,7 +44,12 @@
     "max_seconds": 2.0,
     "text_color": "#111111",
     "box_max_width": 950,
-    "box_padding_em": 0.67
+    "box_padding_em": 0.67,
+    "font_postscript": "AppleSDGothicNeoSB00",
+    "tracking": -30,
+    "box_top_premiere_y": 390,
+    "box_padding_size": 30,
+    "box_color_green": "#AEFFCA"
   },
   "drive_backup_dir": "",
   "backup_interval_seconds": 60
