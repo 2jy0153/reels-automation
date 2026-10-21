@@ -455,6 +455,14 @@ class SubtitleSheetTests(unittest.TestCase):
         self.assertIn("1\t00:00:00,000\t00:00:02,000\t가나다라.", sheet)
 
 
+class PickTests(unittest.TestCase):
+    def test_pick_with_and_without_start(self):
+        import reels as reels_cli
+
+        self.assertEqual(reels_cli.parse_pick("2=abc@3.5"), (2, "abc", 3.5))
+        self.assertEqual(reels_cli.parse_pick("10=abc"), (10, "abc", 0.0))
+
+
 class VoiceTests(unittest.TestCase):
     LINES = [
         {"no": 1, "target_start": 0, "target_end": 3, "narration": "첫 문장."},

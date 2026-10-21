@@ -395,6 +395,44 @@ def cmd_plan_draft(args: argparse.Namespace) -> None:
         print(f"  {item['no']:02d}번 → {target} ({item['note']})")
 
 
+def parse_pick(text: str) -> tuple[int, str, float]:
+    """'2=영상이름@3.5' → (2, '영상이름', 3.5). @가 없으면 시작 지점은 0초."""
+    number, _, rest = text.partition("=")
+    ident, _, start = rest.partition("@")
+    if not number.strip().isdigit() or not ident.strip():
+        raise SystemExit(f"형식이 틀렸습니다: '{text}'. 예: 2=20260711_VID_182915_001 또는 2=영상이름@3.5")
+    return int(number), ident.strip(), float(start) if start.strip() else 0.0
+
+
+def cmd_plan_set(args: argparse.Namespace) -> None:
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    folder = layout["reels"] / args.reel_id
+    timeline_path = folder / "voice" / "timeline.json"
+    if not timeline_path.exists():
+        raise SystemExit("timeline.json이 없습니다. 먼저 음성 타임라인을 만드세요.")
+    timeline = json.loads(timeline_path.read_text(encoding="utf-8"))["lines"]
+    out = folder / "edit" / "plan.json"
+    existing = json.loads(out.read_text(encoding="utf-8")) if out.exists() else None
+    plan = edit_plan.draft_plan(timeline, {}, {}, existing)
+    records = clip_index.load_clips(layout["index"])
+    by_stem = {Path(record["file"]).stem: record["file"] for record in records.values() if record.get("file")}
+    for text in args.picks:
+        number, ident, start = parse_pick(text)
+        path = by_stem.get(ident) or (ident if Path(ident).exists() else None)
+        if path is None or not Path(path).exists():
+            raise SystemExit(f"영상을 찾을 수 없습니다: {ident}")
+        entry = next((item for item in plan if item["no"] == number), None)
+        if entry is None:
+            raise SystemExit(f"{number}번 문단이 없습니다.")
+        entry.update({"clip": path, "in": start, "note": "직접 선택"})
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+    empty = [str(item["no"]) for item in plan if not item.get("clip")]
+    print(f"편집 계획 저장: {out}")
+    print(f"영상 정해지지 않은 문단: {', '.join(empty) if empty else '없음'}")
+
+
 def cmd_assemble(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
@@ -549,6 +587,11 @@ def main() -> None:
 
     sub.add_parser("plan-draft", help="태그와 대본으로 편집 계획 만들기 (없는 영상은 빈 칸)").add_argument("reel_id")
     sub.choices["plan-draft"].set_defaults(func=cmd_plan_draft)
+
+    pick_p = sub.add_parser("plan-set", help="문단마다 쓸 영상을 직접 정하기. 예: 2=영상이름@3.5")
+    pick_p.add_argument("reel_id")
+    pick_p.add_argument("picks", nargs="+")
+    pick_p.set_defaults(func=cmd_plan_set)
 
     assemble_p = sub.add_parser("assemble", help="편집 계획으로 프리미어 타임라인(XML) 만들기")
     assemble_p.add_argument("reel_id")
