@@ -306,9 +306,9 @@ class SubtitleTests(unittest.TestCase):
         timeline = [{"no": 1, "start": 0.0, "end": 9.0, "narration": narration}]
         items = subtitles_mod.cues(timeline, STYLE, [{"caption": (0.0, 9.0)}])
         self.assertGreater(len(items), 1)
-        self.assertTrue(items[0][2].endswith("?"))  # 질문에서 끊긴다
         for start, end, text in items:
             self.assertLessEqual(len(text.replace(" ", "")), 40)
+            self.assertLessEqual(end - start, 2.0 + 1e-6)  # 자막 하나는 최대 2초
             self.assertLess(start, end)
         self.assertEqual(items[0][0], 0.0)
         self.assertEqual(items[-1][1], 9.0)
@@ -516,6 +516,39 @@ class BackupTests(unittest.TestCase):
             backup_mod.backup_once(reels, drive, index)
             backup_mod.backup_once(reels, drive, index)
             self.assertEqual(sorted(p.name for p in drive.iterdir()), ["thumb (2).png", "thumb.png"])
+
+
+class SubtitleFitTests(unittest.TestCase):
+    STYLE_72 = {"font_size": 72, "frame_width": 1080, "side_margin": 80, "char_width_factor": 1.0,
+                "max_lines": 1, "max_chars": 12, "min_seconds": 1.0, "max_seconds": 2.0}
+
+    def test_block_longer_than_two_seconds_is_split_at_word_boundary(self):
+        import subtitles as subtitles_mod
+
+        timeline = [{"no": 1, "start": 0.0, "end": 6.0, "narration": "크로스백 메고 다니다가 담 걸려본 적 있으세요?"}]
+        wins = [{"caption": (0.0, 6.0)}]
+        items = subtitles_mod.cues(timeline, self.STYLE_72, wins)
+        self.assertGreaterEqual(len(items), 3)
+        for start, end, text in items:
+            self.assertLessEqual(end - start, 2.0 + 1e-6)
+            self.assertLessEqual(len(text.replace(" ", "")), 12)
+        self.assertEqual(items[0][0], 0.0)
+        self.assertEqual(items[-1][1], 6.0)
+
+    def test_short_block_under_one_second_joins_its_neighbour(self):
+        import subtitles as subtitles_mod
+
+        items = [(0.0, 0.4, "가나다"), (0.4, 2.0, "라마바")]
+        fitted = subtitles_mod._fit_durations(items, self.STYLE_72)
+        self.assertEqual(fitted, [(0.0, 2.0, "가나다 라마바")])
+
+    def test_colors_are_the_four_fixed_values(self):
+        import subtitles as subtitles_mod
+
+        self.assertEqual(subtitles_mod.COLORS["블루"][0], "#A6D9FF")
+        self.assertEqual(subtitles_mod.COLORS["그린"][0], "#AEFFCA")
+        self.assertEqual(subtitles_mod.COLORS["오렌지"][0], "#FFB56E")
+        self.assertEqual(subtitles_mod.COLORS["노랑"][0], "#FFEB6B")
 
 
 class SubtitleSheetTests(unittest.TestCase):

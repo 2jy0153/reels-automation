@@ -15,6 +15,14 @@ import timing
 
 CLAUSE = re.compile(r"[^,.?!…]+[,.?!…]*")
 
+# 주제 색 목록 (규칙: reels/SUBTITLE_STYLE.md). 이름 → (hex, 주제)
+COLORS = {
+    "블루": ("#A6D9FF", "디지털"),
+    "그린": ("#AEFFCA", "창업"),
+    "오렌지": ("#FFB56E", "콘텐츠 제작"),
+    "노랑": ("#FFEB6B", "템플릿 공유 등 이벤트"),
+}
+
 
 def chars_per_line(style: dict) -> int:
     usable = style["frame_width"] - 2 * style["side_margin"]
@@ -83,14 +91,46 @@ def _wrap(text: str, width: int) -> list[str]:
     return _split_long(text, width)
 
 
+def _balanced_parts(text: str, parts: int, limit: int) -> list[str]:
+    """글자 수가 비슷하도록 어절 경계에서 parts개 안팎으로 나눈다. 한 조각은 limit을 넘지 않는다."""
+    return _split_long(text, min(limit, math.ceil(_length(text) / parts)))
+
+
+def _fit_durations(items: list[tuple[float, float, str]], style: dict) -> list[tuple[float, float, str]]:
+    """자막 하나를 min_seconds~max_seconds(기본 1~2초)에 맞춘다.
+    2초를 넘으면 어절 경계에서 나누고, 1초보다 짧으면 같은 문단의 옆 블록과 합친다(글자 수와 2초 안에서만)."""
+    limit = max_chars_per_cue(style)
+    shortest = style.get("min_seconds", 1.0)
+    longest = style.get("max_seconds", 2.0)
+    split: list[tuple[float, float, str]] = []
+    for start, end, text in items:
+        parts = math.ceil((end - start) / longest - 1e-9)
+        if parts > 1 and _length(text) > 1:
+            pieces = _balanced_parts(text, parts, limit)
+            split.extend((s, e, t) for (s, e), t in zip(timing.spread(pieces, start, end), pieces))
+        else:
+            split.append((start, end, text))
+    merged: list[tuple[float, float, str]] = []
+    for item in split:
+        if merged and min(item[1] - item[0], merged[-1][1] - merged[-1][0]) < shortest:
+            head = merged[-1]
+            text = f"{head[2]} {item[2]}"
+            if _length(text) <= limit and item[1] - head[0] <= longest:
+                merged[-1] = (head[0], item[1], text)
+                continue
+        merged.append(item)
+    return merged
+
+
 def cues(timeline: list[dict], style: dict, wins: list[dict]) -> list[tuple[float, float, str]]:
     """문단의 자막 구간(말 시작 ~ 다음 말 시작 전)을 블록들에 글자 수 비율로 나눠 준다.
-    블록 사이에 빈틈이 생기지 않는다. 쉼 시간은 앞 블록이 이어서 보여 준다."""
+    블록 사이에 빈틈이 생기지 않는다. 쉼 시간은 앞 블록이 이어서 보여 준다.
+    블록 길이는 1~2초에 맞춘다(_fit_durations)."""
     result = []
     for item, win in zip(timeline, wins):
         texts = _cue_texts(item["narration"], style)
-        for (start, end), text in zip(timing.spread(texts, *win["caption"]), texts):
-            result.append((start, end, text))
+        line_cues = [(s, e, t) for (s, e), t in zip(timing.spread(texts, *win["caption"]), texts)]
+        result.extend(_fit_durations(line_cues, style))
     return result
 
 

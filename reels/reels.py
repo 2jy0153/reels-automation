@@ -342,13 +342,22 @@ def cmd_srt(args: argparse.Namespace) -> None:
     if not (voice_dir / "timeline.json").exists():
         raise SystemExit("timeline.json이 없습니다. 먼저 'voice <ID> --speed 값'을 실행하세요.")
     timeline = subtitles.load_timeline(voice_dir)
-    out = folder / "subtitles" / f"{args.reel_id}.srt"
-    out.parent.mkdir(parents=True, exist_ok=True)
     style = config["subtitle"]
+    color_hex, topic = subtitles.COLORS[args.color]
+    out = folder / "subtitles" / f"{args.reel_id}_{args.color}.srt"
+    out.parent.mkdir(parents=True, exist_ok=True)
     wins = timing.windows_for(voice_dir, timeline)
+    blocks = subtitles.cues(timeline, style, wins)
     out.write_text(subtitles.build_srt(timeline, style, wins), encoding="utf-8")
-    print(f"자막 한 줄 최대 {subtitles.chars_per_line(style)}자, 블록 최대 {subtitles.max_chars_per_cue(style)}자 (임시 디자인 값)")
-    print(f"자막 저장: {out} ({len(timeline)}개)")
+    print(f"자막 저장: {out} ({len(blocks)}개 블록)")
+    print(f"주제 색: {args.color} {color_hex} ({topic})")
+    print(f"프리미어 캡션 스타일 이름: 자막_{args.color}")
+    print("프리미어 체크리스트:")
+    print("  - 자막_" + args.color + " 스타일이 없으면 한 번 만들어 저장해 두고 적용")
+    print("  - 박스 윗변을 화면 높이 27%(y=518px)에 맞추고, 가로 가운데 정렬")
+    print("  - 글꼴 Apple SD Gothic Neo SemiBold, 크기 72, 글자 색 #111111, 자간 -3%에서 시작해 눈으로 조정")
+    print("  - 메뉴 이름·패딩 분리 가능 여부는 프리미어 버전별로 확인, 안 되면 .mogrt 템플릿")
+    print("  - 자막 작업은 맥에서만 (Apple SD Gothic Neo는 맥 전용)")
 
 
 def cmd_orient(args: argparse.Namespace) -> None:
@@ -618,6 +627,8 @@ def main() -> None:
 
     srt_p = sub.add_parser("srt", help="타임라인으로 자막(SRT) 만들기")
     srt_p.add_argument("reel_id")
+    srt_p.add_argument("--color", required=True, choices=list(subtitles.COLORS),
+                       help="주제 색 (블루, 그린, 오렌지, 노랑). 규칙상 먼저 물어본 뒤 넣는다")
     srt_p.set_defaults(func=cmd_srt)
 
     orient_p = sub.add_parser("orient", help="영상 방향(세로/가로) 태그 달기 (Gemini 미사용)")
