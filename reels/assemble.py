@@ -41,13 +41,13 @@ def normalize_clips(entry: dict) -> list[dict]:
 
 def video_pieces(timeline: list[dict], plan: list[dict], wins: list[dict],
                  clip_info: dict[str, dict]) -> tuple[list[dict], dict[int, int]]:
-    """문단마다 문장 단위로 영상 조각(샷)을 만든다. 반환: (샷 목록, 영상을 다시 쓴 문단과 횟수)."""
+    """문단마다 문장 단위로 영상 조각(샷)을 만든다. 반환: (샷 목록, 영상이 모자라 앞 영상을 늘린 문단과 횟수)."""
     import shots as shots_mod
     import timing
 
     by_no = {item["no"]: item for item in plan}
     pieces: list[dict] = []
-    repeated: dict[int, int] = {}
+    stretched_by_no: dict[int, int] = {}
     for line, win in zip(timeline, wins):
         if line["no"] not in by_no:
             raise ValueError(f"{line['no']}번 문단이 편집 계획에 없습니다.")
@@ -56,13 +56,13 @@ def video_pieces(timeline: list[dict], plan: list[dict], wins: list[dict],
             info = clip_info[choice["clip"]]
             clips.append({"clip": choice["clip"], "length": info["length"], "scores": info["scores"], "in": choice["in"]})
         spans = timing.sentence_spans(line["narration"], *win["video"])
-        line_pieces, recycled = shots_mod.shots_for_spans(spans, clips)
+        line_pieces, stretched = shots_mod.shots_for_spans(spans, clips)
         for piece in line_pieces:
             piece["no"] = line["no"]
         pieces.extend(line_pieces)
-        if recycled:
-            repeated[line["no"]] = recycled
-    return pieces, repeated
+        if stretched:
+            stretched_by_no[line["no"]] = stretched
+    return pieces, stretched_by_no
 
 
 def markers_for(timeline: list[dict], pieces: list[dict]) -> list[tuple[int, str]]:
@@ -70,6 +70,15 @@ def markers_for(timeline: list[dict], pieces: list[dict]) -> list[tuple[int, str
     covered = {piece["no"] for piece in pieces}
     return [(to_frames(line["start"]), f"{line['no']}번 문단: {line['narration'][:30]}")
             for line in timeline if line["no"] not in covered]
+
+
+def speed_filter(percent: float) -> str:
+    """프리미어 타임 리맵(Time Remap) 효과의 재생 속도(%). 100보다 작으면 느리게 재생한다."""
+    return ("<filter><effect><name>Time Remap</name><effectid>timeremap</effectid>"
+            "<effectcategory>motion</effectcategory><effecttype>motion</effecttype><mediatype>video</mediatype>"
+            '<parameter authoringApp="PremierePro"><parameterid>speed</parameterid><name>speed</name>'
+            f"<valuemin>-100000</valuemin><valuemax>100000</valuemax><value>{percent:.2f}</value></parameter>"
+            "</effect></filter>")
 
 
 def scale_filter(percent: float) -> str:
@@ -111,7 +120,9 @@ def build_xmeml(name: str, timeline: list[dict], pieces: list[dict], narration_f
             f"<in>{to_frames(piece['source_in'])}</in>"
             f"<out>{to_frames(piece['source_out'])}</out>"
             f"{file_block(piece['clip'], frames, info['width'], info['height'], True)}"
-            f"{scale_filter(info['scale'])}</clipitem>"
+            f"{scale_filter(info['scale'])}"
+            f"{speed_filter(piece.get('speed', 1.0) * 100) if piece.get('speed', 1.0) != 1.0 else ''}"
+            "</clipitem>"
         )
 
     audio_items = []

@@ -397,8 +397,8 @@ class AssembleTests(unittest.TestCase):
 
         plan = [{"no": 1, "clips": [{"clip": "/a.mp4", "in": 5.0}]},
                 {"no": 2, "clips": [{"clip": "/b.mp4", "in": 1.0}]}]
-        pieces, repeated = assemble_mod.video_pieces(self.TIMELINE, plan, self.WINS, self.INFO)
-        self.assertEqual(repeated, {})
+        pieces, stretched = assemble_mod.video_pieces(self.TIMELINE, plan, self.WINS, self.INFO)
+        self.assertEqual(stretched, {})
         self.assertEqual(pieces[0]["source_in"], 5.0)
         self.assertEqual((pieces[0]["timeline_start"], pieces[0]["timeline_end"]), (0.0, 2.3))
         self.assertEqual((pieces[1]["timeline_start"], pieces[1]["timeline_end"]), (2.3, 4.0))
@@ -409,11 +409,11 @@ class AssembleTests(unittest.TestCase):
         timeline = [{"no": 1, "start": 0.0, "end": 6.0, "narration": "가나. 다라. 마바."}]
         wins = [{"video": (0.0, 6.0), "caption": (0.0, 6.0)}]
         plan = [{"no": 1, "clips": [{"clip": "/a.mp4", "in": None}, {"clip": "/b.mp4", "in": None}]}]
-        pieces, repeated = assemble_mod.video_pieces(timeline, plan, wins, self.INFO)
-        self.assertEqual(len(pieces), 3)
-        self.assertEqual([p["clip"] for p in pieces], ["/a.mp4", "/b.mp4", "/a.mp4"])
+        pieces, stretched = assemble_mod.video_pieces(timeline, plan, wins, self.INFO)
+        self.assertEqual([p["clip"] for p in pieces], ["/a.mp4", "/b.mp4"])
         self.assertEqual(pieces[-1]["timeline_end"], 6.0)
-        self.assertEqual(repeated, {1: 1})
+        self.assertEqual(pieces[-1]["speed"], 0.5)  # 3초 영상을 6초 동안 절반 속도로
+        self.assertEqual(stretched, {1: 1})
 
     def test_short_clip_continues_with_next_clip(self):
         import assemble as assemble_mod
@@ -424,24 +424,25 @@ class AssembleTests(unittest.TestCase):
                                     {"clip": "/a.mp4", "in": None}]}]
         info = {"/short.mp4": {"length": 1.0, "scores": [0.1]}, "/b.mp4": {"length": 30.0, "scores": [0.5] * 30},
                 "/a.mp4": {"length": 30.0, "scores": [0.5] * 30}}
-        pieces, repeated = assemble_mod.video_pieces(timeline, plan, wins, info)
-        self.assertEqual(repeated, {})
+        pieces, stretched = assemble_mod.video_pieces(timeline, plan, wins, info)
+        self.assertEqual(stretched, {})
         self.assertEqual([p["clip"] for p in pieces], ["/short.mp4", "/b.mp4", "/a.mp4"])
         self.assertEqual(pieces[-1]["timeline_end"], 4.0)
 
-    def test_too_few_clips_are_reused_so_there_is_no_black_gap(self):
+    def test_too_few_clips_stretch_the_last_clip_so_there_is_no_gap(self):
         import assemble as assemble_mod
 
         timeline = [{"no": 1, "start": 0.0, "end": 4.0, "narration": "가. 나."}]
         wins = [{"video": (0.0, 4.0), "caption": (0.0, 4.0)}]
         plan = [{"no": 1, "clips": [{"clip": "/short.mp4", "in": None}]}]
         info = {"/short.mp4": {"length": 1.0, "scores": [0.1]}}
-        pieces, repeated = assemble_mod.video_pieces(timeline, plan, wins, info)
-        self.assertGreater(repeated[1], 0)
+        pieces, stretched = assemble_mod.video_pieces(timeline, plan, wins, info)
+        self.assertEqual(stretched, {1: 2})  # 문장 두 개가 모두 같은 영상을 늘린다
+        self.assertEqual(len(pieces), 1)  # 같은 영상을 다시 쓰지 않는다
         self.assertEqual(pieces[0]["timeline_start"], 0.0)
-        self.assertEqual(pieces[-1]["timeline_end"], 4.0)
-        for before, after in zip(pieces, pieces[1:]):
-            self.assertEqual(before["timeline_end"], after["timeline_start"])
+        self.assertEqual(pieces[0]["timeline_end"], 4.0)
+        self.assertEqual(pieces[0]["speed"], 0.25)  # 1초 영상을 4초 동안 재생
+        self.assertEqual((pieces[0]["source_in"], pieces[0]["source_out"]), (0.0, 1.0))
 
     def test_missing_plan_entry_is_an_error(self):
         import assemble as assemble_mod
@@ -598,6 +599,17 @@ class ShotTests(unittest.TestCase):
         self.assertEqual([s["clip"] for s in shots], ["/a.mp4", "/b.mp4", "/c.mp4"])
         self.assertEqual(shots[0]["timeline_start"], 0.0)
         self.assertEqual(shots[-1]["timeline_end"], 9.0)
+
+    def test_stretch_happens_only_when_no_clip_is_left(self):
+        import shots as shots_mod
+
+        clips = [{"clip": "/a.mp4", "length": 30.0, "scores": [0.5] * 30, "in": None}]
+        shots, stretched = shots_mod.shots_for_spans([(0.0, 2.0), (2.0, 4.0)], clips)
+        self.assertEqual(len(shots), 1)
+        self.assertEqual(shots[0]["timeline_end"], 4.0)
+        self.assertEqual(shots[0]["speed"], 1.0 / 2.0)
+        self.assertEqual(shots[0]["source_out"] - shots[0]["source_in"], 2.0)
+        self.assertEqual(stretched, 1)
 
     def test_user_in_point_is_used(self):
         import shots as shots_mod
