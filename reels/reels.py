@@ -480,7 +480,7 @@ def cmd_assemble(args: argparse.Namespace) -> None:
         if rotation:
             rotated.append(Path(clip).name)
     wins = timing.windows_for(folder / "voice", timeline)
-    pieces, stretched = assemble.video_pieces(timeline, plan, wins, clip_info)
+    pieces, notes = assemble.video_pieces(timeline, plan, wins, clip_info)
     source_frames = {clip: round(info["length"] * assemble.FPS) for clip, info in clip_info.items()}
     xml = assemble.build_xmeml(args.reel_id, timeline, pieces, narration, source_frames, media,
                                assemble.WIDTH, assemble.HEIGHT)
@@ -488,10 +488,11 @@ def cmd_assemble(args: argparse.Namespace) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(xml, encoding="utf-8")
     print(f"프리미어 타임라인 저장: {out} (영상 조각 {len(pieces)}개)")
-    for no, count in stretched.items():
-        slowest = min(piece.get("speed", 1.0) for piece in pieces if piece["no"] == no)
-        print(f"  주의: {no}번 문단은 영상이 모자라서 앞 영상을 {count}번 늘렸습니다 (가장 느린 속도 {slowest * 100:.0f}%). "
-              "편집 계획에 영상을 더 넣으면 자연스러워집니다.")
+    for no, note in notes.items():
+        if note["lacking"]:
+            print(f"  주의: {no}번 문단은 영상이 {note['lacking']:.1f}초 모자랍니다. 그 부분은 검은 화면이 됩니다. 영상을 더 넣어 주세요.")
+        elif note["extended"]:
+            print(f"  알림: {no}번 문단은 영상이 모자라서 앞 영상의 원본을 더 길게 썼습니다.")
     if rotated:
         print(f"  회전 정보가 있는 영상 {len(rotated)}개: 프리미어가 자동으로 돌려서 엽니다. (XML에는 회전값을 넣지 않음)")
     print("프리미어에서 File > Import로 가져온 뒤, 자막은 SRT를 따로 가져오세요.")
