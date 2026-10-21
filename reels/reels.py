@@ -350,6 +350,13 @@ def cmd_srt(args: argparse.Namespace) -> None:
     blocks = subtitles.cues(timeline, style, wins)
     out.write_text(subtitles.build_srt(timeline, style, wins), encoding="utf-8")
     print(f"자막 저장: {out} ({len(blocks)}개 블록)")
+    box_limit = style["box_max_width"]
+    estimated = {text: len(text) * style["font_size"] * style["char_width_factor"] for _, _, text in blocks}
+    too_wide = [text for text, width in estimated.items() if width > box_limit]
+    if too_wide:
+        print(f"주의: 박스 최대 폭 {box_limit}px을 넘을 것으로 예상되는 자막 {len(too_wide)}개 (글꼴 {style['font_size']} 기준). 프리미어에서 수동으로 조정하세요.")
+        for text in too_wide[:5]:
+            print(f"  - {text}")
     print(f"주제 색: {args.color} {color_hex} ({topic})")
     print(f"프리미어 캡션 스타일 이름: 자막_{args.color}")
     print("프리미어 체크리스트:")
