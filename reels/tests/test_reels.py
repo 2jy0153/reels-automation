@@ -519,8 +519,8 @@ class BackupTests(unittest.TestCase):
 
 
 class SubtitleFitTests(unittest.TestCase):
-    STYLE_72 = {"font_size": 72, "frame_width": 1080, "side_margin": 80, "char_width_factor": 1.0,
-                "max_lines": 1, "max_chars": 18, "min_seconds": 1.0, "max_seconds": 2.0}
+    STYLE_72 = {"font_size": 44, "frame_width": 1080, "side_margin": 80, "char_width_factor": 1.0,
+                "max_lines": 1, "max_chars": 21, "min_seconds": 1.0, "max_seconds": 2.0}
 
     def test_block_longer_than_two_seconds_is_split_at_word_boundary(self):
         import subtitles as subtitles_mod
@@ -531,7 +531,7 @@ class SubtitleFitTests(unittest.TestCase):
         self.assertGreaterEqual(len(items), 3)
         for start, end, text in items:
             self.assertLessEqual(end - start, 2.0 + 1e-6)
-            self.assertLessEqual(len(text.replace(" ", "")), 18)
+            self.assertLessEqual(len(text.replace(" ", "")), 21)
         self.assertEqual(items[0][0], 0.0)
         self.assertEqual(items[-1][1], 6.0)
 

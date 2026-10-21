@@ -135,10 +135,10 @@ def cues(timeline: list[dict], style: dict, wins: list[dict]) -> list[tuple[floa
 
 
 def build_srt(timeline: list[dict], style: dict, wins: list[dict]) -> str:
-    width = chars_per_line(style)
+    """블록은 이미 한 줄 한계(max_chars) 안에 있으므로 줄을 다시 나누지 않는다. 두 줄은 프리미어에서 수동으로 맞춘다."""
     blocks = []
     for index, (start, end, text) in enumerate(cues(timeline, style, wins), start=1):
-        blocks.append(f"{index}\n{format_time(start)} --> {format_time(end)}\n" + "\n".join(_wrap(text, width)) + "\n")
+        blocks.append(f"{index}\n{format_time(start)} --> {format_time(end)}\n{text}\n")
     return "\n".join(blocks)
 
 
