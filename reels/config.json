@@ -42,7 +42,7 @@
     "max_chars": 21,
     "min_seconds": 1.0,
     "max_seconds": 2.0,
-    "text_color": "#111111",
+    "text_color": "#000000",
     "box_max_width": 950,
     "box_padding_em": 0.67,
     "font_postscript": "AppleSDGothicNeoSB00",
