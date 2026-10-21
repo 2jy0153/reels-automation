@@ -27,43 +27,50 @@ def file_url(path: str) -> str:
     return "file://localhost" + quote(str(Path(path)))
 
 
-def video_pieces(timeline: list[dict], plan: list[dict]) -> list[dict]:
-    """영상이 정해진 문단마다 영상 조각의 타임라인 위치와 소스 구간을 계산한다.
-    영상이 아직 없는 문단은 조각을 만들지 않는다."""
+def normalize_clips(entry: dict) -> list[dict]:
+    """계획의 한 문단 항목을 영상 목록으로 바꾼다. 예전 형식(clip 하나)도 받는다."""
+    if entry.get("clips"):
+        return [{"clip": c["clip"] if isinstance(c, dict) else c,
+                 "in": c.get("in") if isinstance(c, dict) else None} for c in entry["clips"]]
+    if entry.get("clip"):
+        return [{"clip": entry["clip"], "in": entry.get("in")}]
+    return []
+
+
+def video_pieces(timeline: list[dict], plan: list[dict], cues_by_no: dict[int, list[tuple[float, float]]],
+                 clip_info: dict[str, dict]) -> tuple[list[dict], dict[int, float]]:
+    """문단마다 영상 조각(샷)을 만든다. 반환: (샷 목록, 문단별로 비워진 시간)."""
+    import shots as shots_mod
+
     by_no = {item["no"]: item for item in plan}
-    for line in timeline:
+    pieces: list[dict] = []
+    missing: dict[int, float] = {}
+    for index, line in enumerate(timeline):
         if line["no"] not in by_no:
             raise ValueError(f"{line['no']}번 문단이 편집 계획에 없습니다.")
-    pieces = []
-    for index, line in enumerate(timeline):
-        entry = by_no[line["no"]]
-        if not entry.get("clip"):
-            continue
-        start = line["start"]
-        following = timeline[index + 1] if index + 1 < len(timeline) else None
-        has_next_clip = following is not None and by_no[following["no"]].get("clip")
-        end = following["start"] if has_next_clip else line["end"]
-        pieces.append({
-            "no": line["no"],
-            "clip": entry["clip"],
-            "timeline_start": start,
-            "timeline_end": end,
-            "source_in": float(entry.get("in", 0.0)),
-            "source_out": float(entry.get("in", 0.0)) + (end - start),
-        })
-    return pieces
+        clips = []
+        for choice in normalize_clips(by_no[line["no"]]):
+            info = clip_info[choice["clip"]]
+            clips.append({"clip": choice["clip"], "length": info["length"], "scores": info["scores"], "in": choice["in"]})
+        line_end = timeline[index + 1]["start"] if index + 1 < len(timeline) else line["end"]
+        line_pieces, lacking = shots_mod.shots_for_line(line["start"], line_end, cues_by_no.get(line["no"], []), clips)
+        for piece in line_pieces:
+            piece["no"] = line["no"]
+        pieces.extend(line_pieces)
+        if lacking:
+            missing[line["no"]] = lacking
+    return pieces, missing
 
 
-def markers_for(timeline: list[dict], plan: list[dict]) -> list[tuple[int, str]]:
-    """영상이 없는 문단마다 프리미어 마커를 찍는다."""
-    empty = {item["no"] for item in plan if not item.get("clip")}
+def markers_for(timeline: list[dict], pieces: list[dict]) -> list[tuple[int, str]]:
+    """영상 조각이 하나도 없는 문단마다 프리미어 마커를 찍는다."""
+    covered = {piece["no"] for piece in pieces}
     return [(to_frames(line["start"]), f"{line['no']}번 문단: {line['narration'][:30]}")
-            for line in timeline if line["no"] in empty]
+            for line in timeline if line["no"] not in covered]
 
 
-def build_xmeml(name: str, timeline: list[dict], plan: list[dict], narration_files: list[str],
+def build_xmeml(name: str, timeline: list[dict], pieces: list[dict], narration_files: list[str],
                 source_frames: dict[str, int], width: int = 1080, height: int = 1920) -> str:
-    pieces = video_pieces(timeline, plan)
     total_frames = to_frames(timeline[-1]["end"])
     file_ids: dict[str, str] = {}
 
@@ -115,7 +122,7 @@ def build_xmeml(name: str, timeline: list[dict], plan: list[dict], narration_fil
         f"<audio><track>{''.join(audio_items)}</track></audio>"
         "</media>"
         + "".join(f"<marker><name>{escape(text)}</name><in>{frame}</in><out>{frame}</out></marker>"
-                  for frame, text in markers_for(timeline, plan))
+                  for frame, text in markers_for(timeline, pieces))
         + "</sequence></xmeml>\n"
     )
 

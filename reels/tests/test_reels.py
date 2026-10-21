@@ -367,50 +367,94 @@ class AssembleTests(unittest.TestCase):
         {"no": 1, "start": 0.0, "end": 2.0, "narration": "가"},
         {"no": 2, "start": 2.3, "end": 4.0, "narration": "나"},
     ]
+    INFO = {"/a.mp4": {"length": 30.0, "scores": [0.5] * 30}, "/b.mp4": {"length": 30.0, "scores": [0.5] * 30}}
 
-    def test_pieces_cover_pauses_and_use_plan_in_points(self):
+    def test_each_line_gets_its_clip_and_pauses_are_covered(self):
         import assemble as assemble_mod
 
-        plan = [{"no": 1, "clip": "/a.mp4", "in": 5.0}, {"no": 2, "clip": "/b.mp4", "in": 1.0}]
-        pieces = assemble_mod.video_pieces(self.TIMELINE, plan)
-        self.assertEqual((pieces[0]["timeline_start"], pieces[0]["timeline_end"]), (0.0, 2.3))
-        self.assertEqual((pieces[0]["source_in"], pieces[0]["source_out"]), (5.0, 7.3))
+        plan = [{"no": 1, "clips": [{"clip": "/a.mp4", "in": 5.0}]},
+                {"no": 2, "clips": [{"clip": "/b.mp4", "in": 1.0}]}]
+        cues = {1: [(0.0, 2.0)], 2: [(2.3, 4.0)]}
+        pieces, missing = assemble_mod.video_pieces(self.TIMELINE, plan, cues, self.INFO)
+        self.assertEqual(missing, {})
+        self.assertEqual(pieces[0]["source_in"], 5.0)
+        self.assertEqual((pieces[0]["timeline_start"], pieces[0]["timeline_end"]), (0.0, 2.0))
         self.assertEqual((pieces[1]["timeline_start"], pieces[1]["timeline_end"]), (2.3, 4.0))
+
+    def test_several_clips_per_line_follow_the_cues(self):
+        import assemble as assemble_mod
+
+        timeline = [{"no": 1, "start": 0.0, "end": 6.0, "narration": "가나. 다라. 마바."}]
+        plan = [{"no": 1, "clips": [{"clip": "/a.mp4", "in": None}, {"clip": "/b.mp4", "in": None}]}]
+        cues = {1: [(0.0, 2.0), (2.0, 4.0), (4.0, 6.0)]}
+        pieces, _ = assemble_mod.video_pieces(timeline, plan, cues, self.INFO)
+        self.assertEqual(len(pieces), 2)
+        self.assertEqual(pieces[0]["clip"], "/a.mp4")
+        self.assertEqual(pieces[1]["clip"], "/b.mp4")
+        self.assertEqual(pieces[1]["timeline_end"], 6.0)
+
+    def test_short_clip_continues_with_next_clip(self):
+        import assemble as assemble_mod
+
+        timeline = [{"no": 1, "start": 0.0, "end": 4.0, "narration": "가. 나."}]
+        plan = [{"no": 1, "clips": [{"clip": "/short.mp4", "in": None}, {"clip": "/b.mp4", "in": None},
+                                    {"clip": "/a.mp4", "in": None}]}]
+        info = {"/short.mp4": {"length": 1.0, "scores": [0.1]}, "/b.mp4": {"length": 30.0, "scores": [0.5] * 30},
+                "/a.mp4": {"length": 30.0, "scores": [0.5] * 30}}
+        cues = {1: [(0.0, 2.0), (2.0, 4.0)]}
+        pieces, missing = assemble_mod.video_pieces(timeline, plan, cues, info)
+        self.assertEqual(missing, {})
+        self.assertEqual([p["clip"] for p in pieces], ["/short.mp4", "/b.mp4", "/a.mp4"])
+        self.assertEqual(pieces[-1]["timeline_end"], 4.0)
+
+    def test_missing_clips_are_reported_as_lacking_seconds(self):
+        import assemble as assemble_mod
+
+        timeline = [{"no": 1, "start": 0.0, "end": 4.0, "narration": "가. 나."}]
+        plan = [{"no": 1, "clips": [{"clip": "/short.mp4", "in": None}]}]
+        info = {"/short.mp4": {"length": 1.0, "scores": [0.1]}}
+        cues = {1: [(0.0, 2.0), (2.0, 4.0)]}
+        _, missing = assemble_mod.video_pieces(timeline, plan, cues, info)
+        self.assertEqual(missing, {1: 3.0})
+
+    def test_missing_plan_entry_is_an_error(self):
+        import assemble as assemble_mod
+
+        with self.assertRaises(ValueError):
+            assemble_mod.video_pieces(self.TIMELINE, [{"no": 1, "clips": []}], {}, self.INFO)
 
     def test_undecided_line_becomes_a_marker_and_no_clip(self):
         import xml.etree.ElementTree as ET
 
         import assemble as assemble_mod
 
-        plan = [{"no": 1, "clip": "/a.mp4", "in": 0.0}, {"no": 2, "clip": None, "in": 0.0}]
-        xml = assemble_mod.build_xmeml("t", self.TIMELINE, plan, ["/v/01.mp3", "/v/02.mp3"], {"/a.mp4": 300})
+        plan = [{"no": 1, "clips": [{"clip": "/a.mp4", "in": None}]}, {"no": 2, "clips": []}]
+        cues = {1: [(0.0, 2.0)], 2: [(2.3, 4.0)]}
+        pieces, _ = assemble_mod.video_pieces(self.TIMELINE, plan, cues, self.INFO)
+        xml = assemble_mod.build_xmeml("t", self.TIMELINE, pieces, ["/v/01.mp3", "/v/02.mp3"], {"/a.mp4": 900})
         root = ET.fromstring(xml)
         self.assertEqual(len(root.findall(".//video/track/clipitem")), 1)
         markers = root.findall(".//marker/name")
         self.assertEqual(len(markers), 1)
         self.assertIn("2번 문단", markers[0].text)
 
-    def test_missing_plan_entry_is_an_error(self):
-        import assemble as assemble_mod
-
-        with self.assertRaises(ValueError):
-            assemble_mod.video_pieces(self.TIMELINE, [{"no": 1, "clip": "/a.mp4", "in": 0}])
-
     def test_xml_is_well_formed_and_has_both_tracks(self):
         import xml.etree.ElementTree as ET
 
         import assemble as assemble_mod
 
-        plan = [{"no": 1, "clip": "/Volumes/SSD 1TB/a b.mp4", "in": 0.0}, {"no": 2, "clip": "/a.mp4", "in": 0.0}]
-        xml = assemble_mod.build_xmeml("test", self.TIMELINE, plan, ["/v/01.mp3", "/v/02.mp3"],
+        info = {"/Volumes/SSD 1TB/a b.mp4": {"length": 10.0, "scores": [0.5] * 10}, "/a.mp4": {"length": 10.0, "scores": [0.5] * 10}}
+        plan = [{"no": 1, "clips": [{"clip": "/Volumes/SSD 1TB/a b.mp4", "in": None}]},
+                {"no": 2, "clips": [{"clip": "/a.mp4", "in": None}]}]
+        cues = {1: [(0.0, 2.0)], 2: [(2.3, 4.0)]}
+        pieces, _ = assemble_mod.video_pieces(self.TIMELINE, plan, cues, info)
+        xml = assemble_mod.build_xmeml("test", self.TIMELINE, pieces, ["/v/01.mp3", "/v/02.mp3"],
                                        {"/Volumes/SSD 1TB/a b.mp4": 300, "/a.mp4": 300})
         root = ET.fromstring(xml)
-        video = root.findall(".//video/track/clipitem")
-        audio = root.findall(".//audio/track/clipitem")
-        self.assertEqual(len(video), 2)
-        self.assertEqual(len(audio), 2)
-        self.assertEqual(video[0].find("end").text, "69")  # 2.3초 × 30fps
-        self.assertIn("%20", video[0].find("file/pathurl").text)
+        self.assertEqual(len(root.findall(".//video/track/clipitem")), 2)
+        self.assertEqual(len(root.findall(".//audio/track/clipitem")), 2)
+        self.assertIn("%20", root.find(".//video/track/clipitem/file/pathurl").text)
+
 
 
 class BackupTests(unittest.TestCase):
@@ -459,8 +503,32 @@ class PickTests(unittest.TestCase):
     def test_pick_with_and_without_start(self):
         import reels as reels_cli
 
-        self.assertEqual(reels_cli.parse_pick("2=abc@3.5"), (2, "abc", 3.5))
-        self.assertEqual(reels_cli.parse_pick("10=abc"), (10, "abc", 0.0))
+        self.assertEqual(reels_cli.parse_pick("2=abc@3.5"), (2, [("abc", 3.5)]))
+        self.assertEqual(reels_cli.parse_pick("10=abc"), (10, [("abc", None)]))
+        self.assertEqual(reels_cli.parse_pick("1=a,b@2"), (1, [("a", None), ("b", 2.0)]))
+
+
+class StabilityTests(unittest.TestCase):
+    def test_best_start_skips_the_shaky_part(self):
+        import motion as motion_mod
+
+        scores = [5.0, 5.0, 0.2, 0.2, 0.2, 0.2, 5.0, 5.0]
+        self.assertEqual(motion_mod.best_start(scores, 3), 2.0)
+
+    def test_clip_shorter_than_need_starts_at_zero(self):
+        import motion as motion_mod
+
+        self.assertEqual(motion_mod.best_start([0.1, 0.1], 5), 0.0)
+
+    def test_group_cues_keeps_boundaries_on_cues(self):
+        import shots as shots_mod
+
+        spans = [(0.0, 2.0), (2.0, 4.0), (4.0, 6.0), (6.0, 8.0)]
+        groups = shots_mod.group_cues(spans, 2)
+        self.assertEqual(len(groups), 2)
+        self.assertEqual(groups[0][0], 0.0)
+        self.assertEqual(groups[-1][1], 8.0)
+        self.assertIn(groups[0][1], {2.0, 4.0, 6.0})
 
 
 class VoiceTests(unittest.TestCase):

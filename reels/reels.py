@@ -395,13 +395,19 @@ def cmd_plan_draft(args: argparse.Namespace) -> None:
         print(f"  {item['no']:02d}번 → {target} ({item['note']})")
 
 
-def parse_pick(text: str) -> tuple[int, str, float]:
-    """'2=영상이름@3.5' → (2, '영상이름', 3.5). @가 없으면 시작 지점은 0초."""
+def parse_pick(text: str) -> tuple[int, list[tuple[str, float | None]]]:
+    """'2=영상1@3.5,영상2' → (2, [('영상1', 3.5), ('영상2', None)]).
+    @시작초는 생략할 수 있다. 생략하면 흔들림이 적은 구간을 자동으로 고른다."""
     number, _, rest = text.partition("=")
-    ident, _, start = rest.partition("@")
-    if not number.strip().isdigit() or not ident.strip():
-        raise SystemExit(f"형식이 틀렸습니다: '{text}'. 예: 2=20260711_VID_182915_001 또는 2=영상이름@3.5")
-    return int(number), ident.strip(), float(start) if start.strip() else 0.0
+    if not number.strip().isdigit() or not rest.strip():
+        raise SystemExit(f"형식이 틀렸습니다: '{text}'. 예: 2=영상이름 또는 2=영상1,영상2@3.5,영상3")
+    choices = []
+    for item in rest.split(","):
+        ident, _, start = item.partition("@")
+        if not ident.strip():
+            raise SystemExit(f"영상 이름이 비어 있습니다: '{text}'")
+        choices.append((ident.strip(), float(start) if start.strip() else None))
+    return int(number), choices
 
 
 def cmd_plan_set(args: argparse.Namespace) -> None:
@@ -418,22 +424,28 @@ def cmd_plan_set(args: argparse.Namespace) -> None:
     records = clip_index.load_clips(layout["index"])
     by_stem = {Path(record["file"]).stem: record["file"] for record in records.values() if record.get("file")}
     for text in args.picks:
-        number, ident, start = parse_pick(text)
-        path = by_stem.get(ident) or (ident if Path(ident).exists() else None)
-        if path is None or not Path(path).exists():
-            raise SystemExit(f"영상을 찾을 수 없습니다: {ident}")
+        number, choices = parse_pick(text)
         entry = next((item for item in plan if item["no"] == number), None)
         if entry is None:
             raise SystemExit(f"{number}번 문단이 없습니다.")
-        entry.update({"clip": path, "in": start, "note": "직접 선택"})
+        clips = []
+        for ident, start in choices:
+            path = by_stem.get(ident) or (ident if Path(ident).exists() else None)
+            if path is None or not Path(path).exists():
+                raise SystemExit(f"영상을 찾을 수 없습니다: {ident}")
+            clips.append({"clip": path, "in": start})
+        entry.pop("clip", None)
+        entry.update({"clips": clips, "note": f"직접 선택 {len(clips)}개"})
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
-    empty = [str(item["no"]) for item in plan if not item.get("clip")]
+    empty = [str(item["no"]) for item in plan if not assemble.normalize_clips(item)]
     print(f"편집 계획 저장: {out}")
     print(f"영상 정해지지 않은 문단: {', '.join(empty) if empty else '없음'}")
 
 
 def cmd_assemble(args: argparse.Namespace) -> None:
+    import motion
+
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
     folder = layout["reels"] / args.reel_id
@@ -445,19 +457,29 @@ def cmd_assemble(args: argparse.Namespace) -> None:
     timeline = json.loads(timeline_path.read_text(encoding="utf-8"))["lines"]
     plan = assemble.load_plan(plan_path)
     narration = [str(folder / "voice" / f"{line['no']:02d}.mp3") for line in timeline]
-    missing = [path for path in narration if not Path(path).exists()]
-    if missing:
-        raise SystemExit(f"음성 파일이 없습니다: {missing[0]} 외 {len(missing) - 1}개")
-    clips = sorted({item["clip"] for item in plan if item.get("clip")})
-    not_found = [clip for clip in clips if not Path(clip).exists()]
+    missing_audio = [path for path in narration if not Path(path).exists()]
+    if missing_audio:
+        raise SystemExit(f"음성 파일이 없습니다: {missing_audio[0]} 외 {len(missing_audio) - 1}개")
+    clip_paths = sorted({c["clip"] for item in plan for c in assemble.normalize_clips(item)})
+    not_found = [clip for clip in clip_paths if not Path(clip).exists()]
     if not_found:
         raise SystemExit(f"영상 파일을 찾을 수 없습니다: {not_found[0]} 외 {len(not_found) - 1}개")
-    source_frames = {clip: round(voice.duration(Path(clip)) * assemble.FPS) for clip in clips}
-    xml = assemble.build_xmeml(args.reel_id, timeline, plan, narration, source_frames)
+    cache_dir = layout["index"]
+    clip_info = {}
+    for clip in clip_paths:
+        print(f"  흔들림 확인: {Path(clip).name}")
+        clip_info[clip] = {"length": voice.duration(Path(clip)), "scores": motion.cached_scores(Path(clip), cache_dir)}
+    style = config["subtitle"]
+    cues_by_no = {line["no"]: [(s, e) for s, e, _ in subtitles.cues([line], style)] for line in timeline}
+    pieces, missing = assemble.video_pieces(timeline, plan, cues_by_no, clip_info)
+    source_frames = {clip: round(info["length"] * assemble.FPS) for clip, info in clip_info.items()}
+    xml = assemble.build_xmeml(args.reel_id, timeline, pieces, narration, source_frames)
     out = folder / "project" / f"{args.reel_id}.xml"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(xml, encoding="utf-8")
-    print(f"프리미어 타임라인 저장: {out}")
+    print(f"프리미어 타임라인 저장: {out} (영상 조각 {len(pieces)}개)")
+    for no, seconds in missing.items():
+        print(f"  주의: {no}번 문단은 영상이 {seconds:.1f}초 모자랍니다. 프리미어에서 영상을 더 넣어 주세요.")
     print("프리미어에서 File > Import로 가져온 뒤, 자막은 SRT를 따로 가져오세요.")
 
 
