@@ -41,3 +41,28 @@ def orientation_of(path: Path) -> list[str]:
     )
     frames = json.loads(result.stdout or "{}").get("frames", [])
     return labels_from_frames(frames)
+
+
+def stream_size(path: Path) -> tuple[int, int, int]:
+    """파일에 저장된 가로·세로 크기와 회전 값(도). 회전 값이 있으면 재생 방향과 다르다."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
+         "-of", "json", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    stream = json.loads(result.stdout)["streams"][0]
+    rotation = 0
+    for side in stream.get("side_data_list", []):
+        if "rotation" in side:
+            rotation = int(round(float(side["rotation"])))
+    if "rotate" in stream.get("tags", {}):
+        rotation = int(stream["tags"]["rotate"])
+    return int(stream["width"]), int(stream["height"]), rotation
+
+
+def fill_scale(width: int, height: int, rotation: int, frame_width: int, frame_height: int) -> float:
+    """화면을 꽉 채우는 확대율(%). 가운데를 기준으로 자르므로 넘치는 쪽은 잘린다."""
+    if abs(rotation) % 180 == 90:
+        width, height = height, width
+    return 100 * max(frame_width / width, frame_height / height)

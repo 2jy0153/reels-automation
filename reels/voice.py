@@ -181,3 +181,17 @@ def cut_audio(src: Path, dst: Path, start: float, end: float) -> None:
     except BaseException:
         temp.unlink(missing_ok=True)
         raise
+
+
+def silence_points(path: Path, noise_db: int, min_silence: float) -> tuple[list[float], list[float]]:
+    """무음의 시작 시점 목록과 끝 시점 목록. 파일 끝까지 이어지는 무음은 끝 시점이 없다."""
+    import re
+
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
+         "-af", f"silencedetect=noise={noise_db}dB:d={min_silence}", "-f", "null", "-"],
+        capture_output=True, text=True, check=True,
+    )
+    starts = [float(value) for value in re.findall(r"silence_start: ([\d.]+)", result.stderr)]
+    ends = [float(value) for value in re.findall(r"silence_end: ([\d.]+)", result.stderr)]
+    return starts, ends

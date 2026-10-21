@@ -7,7 +7,7 @@
 plan.json 형식
   [{"no": 1, "clip": "/경로/파일.mp4", "in": 0.0}, ...]
 
-영상 조각은 해당 문단의 시작부터 다음 문단이 시작하기 전까지(쉼 포함) 이어진다.
+영상 조각은 문단의 말 시작부터 다음 문단의 말 시작 전까지 이어진다(쉼 포함). 빈틈이 없다.
 마지막 문단은 음성이 끝나는 지점까지다.
 """
 
@@ -17,6 +17,8 @@ from urllib.parse import quote
 from xml.sax.saxutils import escape
 
 FPS = 30
+WIDTH = 1080
+HEIGHT = 1920
 
 
 def to_frames(seconds: float) -> int:
@@ -37,29 +39,30 @@ def normalize_clips(entry: dict) -> list[dict]:
     return []
 
 
-def video_pieces(timeline: list[dict], plan: list[dict], cues_by_no: dict[int, list[tuple[float, float]]],
-                 clip_info: dict[str, dict]) -> tuple[list[dict], dict[int, float]]:
-    """문단마다 영상 조각(샷)을 만든다. 반환: (샷 목록, 문단별로 비워진 시간)."""
+def video_pieces(timeline: list[dict], plan: list[dict], wins: list[dict],
+                 clip_info: dict[str, dict]) -> tuple[list[dict], dict[int, int]]:
+    """문단마다 문장 단위로 영상 조각(샷)을 만든다. 반환: (샷 목록, 영상을 다시 쓴 문단과 횟수)."""
     import shots as shots_mod
+    import timing
 
     by_no = {item["no"]: item for item in plan}
     pieces: list[dict] = []
-    missing: dict[int, float] = {}
-    for index, line in enumerate(timeline):
+    repeated: dict[int, int] = {}
+    for line, win in zip(timeline, wins):
         if line["no"] not in by_no:
             raise ValueError(f"{line['no']}번 문단이 편집 계획에 없습니다.")
         clips = []
         for choice in normalize_clips(by_no[line["no"]]):
             info = clip_info[choice["clip"]]
             clips.append({"clip": choice["clip"], "length": info["length"], "scores": info["scores"], "in": choice["in"]})
-        line_end = timeline[index + 1]["start"] if index + 1 < len(timeline) else line["end"]
-        line_pieces, lacking = shots_mod.shots_for_line(line["start"], line_end, cues_by_no.get(line["no"], []), clips)
+        spans = timing.sentence_spans(line["narration"], *win["video"])
+        line_pieces, recycled = shots_mod.shots_for_spans(spans, clips)
         for piece in line_pieces:
             piece["no"] = line["no"]
         pieces.extend(line_pieces)
-        if lacking:
-            missing[line["no"]] = lacking
-    return pieces, missing
+        if recycled:
+            repeated[line["no"]] = recycled
+    return pieces, repeated
 
 
 def markers_for(timeline: list[dict], pieces: list[dict]) -> list[tuple[int, str]]:
@@ -69,24 +72,37 @@ def markers_for(timeline: list[dict], pieces: list[dict]) -> list[tuple[int, str
             for line in timeline if line["no"] not in covered]
 
 
+def scale_filter(percent: float) -> str:
+    """프리미어 기본 모션 효과의 크기(Scale). 가운데를 기준으로 확대·축소한다."""
+    return ("<filter><effect><name>Basic Motion</name><effectid>basic</effectid>"
+            "<effectcategory>motion</effectcategory><effecttype>motion</effecttype><mediatype>video</mediatype>"
+            '<parameter authoringApp="PremierePro"><parameterid>scale</parameterid><name>Scale</name>'
+            f"<valuemin>0</valuemin><valuemax>1000</valuemax><value>{percent:.2f}</value></parameter>"
+            "</effect></filter>")
+
+
 def build_xmeml(name: str, timeline: list[dict], pieces: list[dict], narration_files: list[str],
-                source_frames: dict[str, int], width: int = 1080, height: int = 1920) -> str:
+                source_frames: dict[str, int], media: dict[str, dict] | None = None,
+                width: int = 1080, height: int = 1920) -> str:
+    """media: 영상 파일 경로 → {"width", "height", "scale"}. 없으면 화면 크기에 맞춘다고 보고 확대율 100%."""
     total_frames = to_frames(timeline[-1]["end"])
     file_ids: dict[str, str] = {}
+    media = media or {}
 
-    def file_block(path: str, frames: int, has_video: bool) -> str:
+    def file_block(path: str, frames: int, src_width: int, src_height: int, has_video: bool) -> str:
         fid = file_ids.setdefault(path, f"file-{len(file_ids) + 1}")
-        media = ("<video><samplecharacteristics><width>%d</width><height>%d</height></samplecharacteristics></video>"
-                 % (width, height)) if has_video else ""
+        video = (f"<video><samplecharacteristics><width>{src_width}</width><height>{src_height}</height>"
+                 "</samplecharacteristics></video>") if has_video else ""
         audio = "<audio><channelcount>2</channelcount></audio>"
         return (f'<file id="{fid}"><name>{escape(Path(path).name)}</name>'
                 f"<pathurl>{escape(file_url(path))}</pathurl>"
                 f"<duration>{frames}</duration>"
-                f"<media>{media}{audio}</media></file>")
+                f"<media>{video}{audio}</media></file>")
 
     video_items = []
     for number, piece in enumerate(pieces, start=1):
         frames = source_frames[piece["clip"]]
+        info = media.get(piece["clip"], {"width": width, "height": height, "scale": 100.0})
         video_items.append(
             f'<clipitem id="v{number}"><name>{escape(Path(piece["clip"]).name)}</name>'
             f"<duration>{frames}</duration><rate><timebase>{FPS}</timebase></rate>"
@@ -94,7 +110,8 @@ def build_xmeml(name: str, timeline: list[dict], pieces: list[dict], narration_f
             f"<end>{to_frames(piece['timeline_end'])}</end>"
             f"<in>{to_frames(piece['source_in'])}</in>"
             f"<out>{to_frames(piece['source_out'])}</out>"
-            f"{file_block(piece['clip'], frames, True)}</clipitem>"
+            f"{file_block(piece['clip'], frames, info['width'], info['height'], True)}"
+            f"{scale_filter(info['scale'])}</clipitem>"
         )
 
     audio_items = []
@@ -106,7 +123,7 @@ def build_xmeml(name: str, timeline: list[dict], pieces: list[dict], narration_f
             f"<start>{to_frames(line['start'])}</start>"
             f"<end>{to_frames(line['end'])}</end>"
             f"<in>0</in><out>{to_frames(length)}</out>"
-            f"{file_block(path, to_frames(length), False)}"
+            f"{file_block(path, to_frames(length), 0, 0, False)}"
             "<sourcetrack><mediatype>audio</mediatype><trackindex>1</trackindex></sourcetrack></clipitem>"
         )
 

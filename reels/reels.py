@@ -34,6 +34,7 @@ import proxy  # noqa: E402
 import script  # noqa: E402
 import subtitles  # noqa: E402
 import tagger  # noqa: E402
+import timing  # noqa: E402
 import voice  # noqa: E402
 
 
@@ -344,7 +345,8 @@ def cmd_srt(args: argparse.Namespace) -> None:
     out = folder / "subtitles" / f"{args.reel_id}.srt"
     out.parent.mkdir(parents=True, exist_ok=True)
     style = config["subtitle"]
-    out.write_text(subtitles.build_srt(timeline, style), encoding="utf-8")
+    wins = timing.windows_for(voice_dir, timeline)
+    out.write_text(subtitles.build_srt(timeline, style, wins), encoding="utf-8")
     print(f"자막 한 줄 최대 {subtitles.chars_per_line(style)}자, 블록 최대 {subtitles.max_chars_per_cue(style)}자 (임시 디자인 값)")
     print(f"자막 저장: {out} ({len(timeline)}개)")
 
@@ -384,8 +386,9 @@ def cmd_plan_draft(args: argparse.Namespace) -> None:
     }
     out = folder / "edit" / "plan.json"
     existing = json.loads(out.read_text(encoding="utf-8")) if out.exists() else None
-    durations = {path: voice.duration(Path(path)) for path in clips}
-    plan = edit_plan.draft_plan(timeline, clips, durations, existing)
+    wins = timing.windows_for(folder / "voice", timeline)
+    needed = {line["no"]: timing.clip_count(line["narration"], *win["video"]) for line, win in zip(timeline, wins)}
+    plan = edit_plan.draft_plan(timeline, clips, needed, existing)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     empty = sum(1 for item in plan if not item.get("clip"))
@@ -466,20 +469,29 @@ def cmd_assemble(args: argparse.Namespace) -> None:
         raise SystemExit(f"영상 파일을 찾을 수 없습니다: {not_found[0]} 외 {len(not_found) - 1}개")
     cache_dir = layout["index"]
     clip_info = {}
+    media = {}
+    rotated = []
     for clip in clip_paths:
         print(f"  흔들림 확인: {Path(clip).name}")
+        width, height, rotation = media_info.stream_size(Path(clip))
+        scale = media_info.fill_scale(width, height, rotation, assemble.WIDTH, assemble.HEIGHT)
         clip_info[clip] = {"length": voice.duration(Path(clip)), "scores": motion.cached_scores(Path(clip), cache_dir)}
-    style = config["subtitle"]
-    cues_by_no = {line["no"]: [(s, e) for s, e, _ in subtitles.cues([line], style)] for line in timeline}
-    pieces, missing = assemble.video_pieces(timeline, plan, cues_by_no, clip_info)
+        media[clip] = {"width": width, "height": height, "scale": scale}
+        if rotation:
+            rotated.append(Path(clip).name)
+    wins = timing.windows_for(folder / "voice", timeline)
+    pieces, repeated = assemble.video_pieces(timeline, plan, wins, clip_info)
     source_frames = {clip: round(info["length"] * assemble.FPS) for clip, info in clip_info.items()}
-    xml = assemble.build_xmeml(args.reel_id, timeline, pieces, narration, source_frames)
+    xml = assemble.build_xmeml(args.reel_id, timeline, pieces, narration, source_frames, media,
+                               assemble.WIDTH, assemble.HEIGHT)
     out = folder / "project" / f"{args.reel_id}.xml"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(xml, encoding="utf-8")
     print(f"프리미어 타임라인 저장: {out} (영상 조각 {len(pieces)}개)")
-    for no, seconds in missing.items():
-        print(f"  주의: {no}번 문단은 영상이 {seconds:.1f}초 모자랍니다. 프리미어에서 영상을 더 넣어 주세요.")
+    for no, count in repeated.items():
+        print(f"  주의: {no}번 문단은 영상이 모자라서 {count}번 처음부터 다시 씁니다. 편집 계획에 영상을 더 넣어 주세요.")
+    if rotated:
+        print(f"  회전 정보가 있는 영상 {len(rotated)}개: 프리미어가 자동으로 돌려서 엽니다. (XML에는 회전값을 넣지 않음)")
     print("프리미어에서 File > Import로 가져온 뒤, 자막은 SRT를 따로 가져오세요.")
 
 
@@ -491,7 +503,9 @@ def cmd_subtitle_sheet(args: argparse.Namespace) -> None:
         raise SystemExit("timeline.json이 없습니다. 먼저 'voice <ID> --speed 값'을 실행하세요.")
     out = layout["reels"] / args.reel_id / "subtitles" / f"{args.reel_id}_manual.txt"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(subtitles.manual_sheet(subtitles.load_timeline(voice_dir), config["subtitle"]), encoding="utf-8")
+    timeline = subtitles.load_timeline(voice_dir)
+    wins = timing.windows_for(voice_dir, timeline)
+    out.write_text(subtitles.manual_sheet(timeline, config["subtitle"], wins), encoding="utf-8")
     print(f"수동 입력용 자막 시트: {out}")
 
 

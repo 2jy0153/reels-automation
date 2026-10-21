@@ -34,43 +34,40 @@ def placeholder(line: dict) -> dict:
             "note": f"영상 필요: {line['narration'][:20]}"}
 
 
-def draft_plan(timeline: list[dict], clips: dict[str, dict], durations: dict[str, float],
+def has_clips(item: dict) -> bool:
+    return bool(item.get("clips")) or bool(item.get("clip"))
+
+
+def draft_plan(timeline: list[dict], clips: dict[str, dict], needed: dict[int, int],
                existing: list[dict] | None = None) -> list[dict]:
-    """clips: 파일 경로 → 태그 기록, durations: 파일 경로 → 길이(초).
+    """clips: 파일 경로 → 태그 기록. needed: 문단 번호 → 필요한 영상 개수 (문장마다 1~3개).
 
     existing: 이미 정한 계획. 영상이 정해진 문단은 그대로 두고, 빈 문단만 태그로 채운다.
     태그가 없으면 빈 문단으로 두어, 나중에 수동으로 매칭할 수 있게 한다.
+    같은 영상은 적게 쓰도록 점수에서 감점한다.
     """
-    manual = {item["no"]: item for item in existing or [] if item.get("clip")}
+    manual = {item["no"]: item for item in existing or [] if has_clips(item)}
     uses: dict[str, int] = {}
-    used_until: dict[str, float] = {}
     plan = []
-    for index, line in enumerate(timeline):
+    for line in timeline:
         if line["no"] in manual:
             plan.append(manual[line["no"]])
             continue
-        if not clips:
+        count = min(max(1, needed.get(line["no"], 1)), len(clips))
+        chosen: list[str] = []
+        for _ in range(count):
+            candidates = [path for path in clips if path not in chosen]
+            if not candidates:
+                break
+            best = max(candidates, key=lambda path: score(line["narration"], clips[path], uses.get(path, 0)))
+            chosen.append(best)
+            uses[best] = uses.get(best, 0) + 1
+        if not chosen:
             plan.append(placeholder(line))
             continue
-        best_path, best_score = None, None
-        for path, record in clips.items():
-            value = score(line["narration"], record, uses.get(path, 0))
-            if best_score is None or value > best_score:
-                best_path, best_score = path, value
-        if best_path is None:
-            plan.append(placeholder(line))
-            continue
-
-        piece_length = (timeline[index + 1]["start"] if index + 1 < len(timeline) else line["end"]) - line["start"]
-        start_at = used_until.get(best_path, 0.0)
-        if start_at + piece_length > durations.get(best_path, 0.0):
-            start_at = 0.0  # 영상 끝을 넘으면 처음부터 다시 쓴다
-        used_until[best_path] = start_at + piece_length
-        uses[best_path] = uses.get(best_path, 0) + 1
         plan.append({
             "no": line["no"],
-            "clip": best_path,
-            "in": round(start_at, 3),
-            "note": f"점수 {best_score:.1f}, 같은 영상 {uses[best_path]}번째",
+            "clips": [{"clip": path, "in": None} for path in chosen],
+            "note": f"태그로 고른 영상 {len(chosen)}개 (필요 {needed.get(line['no'], 1)}개)",
         })
     return plan
