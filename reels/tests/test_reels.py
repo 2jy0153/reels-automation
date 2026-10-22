@@ -303,6 +303,27 @@ class HandoffTests(unittest.TestCase):
         data = script.parse_script(text, "x", table=2)
         self.assertIn("310g", data["lines"][0]["narration"])
 
+    def test_voice_split_table_overrides_narration_and_sets_subtitle(self):
+        text = V3_DOC.replace("## 채울 것", """### 나레이션 줄임 적용안
+| 시간 | 나레이션 (말) | 자막 (화면, ` / `는 카드 나눔) | 줄인 방식 |
+|---|---|---|---|
+| 2번 (2.5~6초) | 하나면 될 줄. | 하나면 될 줄 알았음 / 근데 아니었음 | 서술어 빼기 |
+
+## 채울 것""")
+        data = self.parse(text)
+        self.assertEqual(data["lines"][1]["narration"], "하나면 될 줄.")
+        self.assertEqual(data["lines"][1]["subtitle"], "하나면 될 줄 알았음 / 근데 아니었음")
+        self.assertNotIn("subtitle", data["lines"][0])
+        self.assertIn("02\t하나면 될 줄.", handoff.voice_script(data))
+
+    def test_srt_uses_subtitle_cards_when_given(self):
+        import subtitles
+        timeline = [{"no": 1, "start": 0.0, "end": 2.0, "narration": "하나면 될 줄.",
+                     "subtitle": "하나면 될 줄 알았음 / 근데 아니었음"}]
+        wins = [{"caption": (0.0, 2.0), "video": (0.0, 2.0)}]
+        texts = [t for _, _, t in subtitles.cues(timeline, {"max_chars": 21, "max_lines": 1}, wins)]
+        self.assertEqual(texts, ["하나면 될 줄 알았음", "근데 아니었음"])
+
     def test_shot_checklist_lists_every_scene(self):
         sheet = handoff.shot_checklist(self.parse(V3_DOC))
         self.assertIn("- [ ] 1. 0~2.5초 · 저울 위 천", sheet)

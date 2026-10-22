@@ -151,8 +151,14 @@ def cmd_handoff(args: argparse.Namespace) -> None:
     json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     shots_path = folder / "script" / "shotlist.md"
     shots_path.write_text(handoff.shot_checklist(data), encoding="utf-8")
+    voice_path = folder / "script" / "voice.txt"
+    voice_path.write_text(handoff.voice_script(data), encoding="utf-8")
     print(f"대본 JSON 생성: {json_path}")
     print(f"촬영 체크리스트: {shots_path}")
+    print(f"음성 대본: {voice_path}")
+    split = [line["no"] for line in data["lines"] if line.get("subtitle")]
+    if split:
+        print(f"말과 자막을 따로 쓰는 줄: {', '.join(map(str, split))}번")
     print(f"다음: 음성은 'voice {args.id}'로 확인 후 --yes, 자막은 주제 색을 물어본 뒤 'srt {args.id} --color <색>'")
 
 

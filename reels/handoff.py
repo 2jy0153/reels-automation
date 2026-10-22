@@ -15,7 +15,7 @@ STATUS = re.compile(r"^\s*(?:>\s*)?\**상태\**\s*[:：]\s*(.+?)\s*$")
 CONFIRMED = "컨펌"
 BLANK = re.compile(r"\[\s*\](?!\()|\[[^\]\n]*/[^\]\n]*\](?!\()")  # [ ] 또는 [A/B], 링크 [글](주소)는 제외
 TODO = re.compile(r"^\s*[-*]\s*\[ \]\s*(.+?)\s*$")
-FIELDS = {"narration": "대사", "visual": "장면", "caption": "화면 자막"}
+FIELDS = {"narration": "대사", "visual": "장면", "caption": "화면 자막", "subtitle": "자막"}
 
 
 def status(text: str) -> str | None:
@@ -42,6 +42,11 @@ def problems(text: str, data: dict) -> list[str]:
         if todo:
             found.append(f"채울 것이 남아 있습니다: {todo.group(1)}")
     return found
+
+
+def voice_script(data: dict) -> str:
+    """음성 대본: 줄마다 말할 문장(나레이션)만."""
+    return "\n".join(f"{line['no']:02d}\t{line['narration']}" for line in data["lines"]) + "\n"
 
 
 def _time(seconds: int | float) -> str:

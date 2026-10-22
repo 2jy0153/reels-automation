@@ -101,7 +101,32 @@ def _from_table(lines: list[str], rows: list[dict], reel_id: str) -> dict:
             "narration": _narration(row).replace("**", "").strip(),
             "caption": None if not caption or caption.startswith("(자막 없음") else caption,
         })
+    _apply_voice_split(lines, beats)
     return _build(reel_id, lines, beats, timing_estimated=False)
+
+
+def _apply_voice_split(lines: list[str], beats: list[dict]) -> None:
+    """'나레이션 | 자막' 표가 있으면 그 줄은 말(narration)과 자막(subtitle)을 따로 쓴다.
+    시간 칸의 'N번'으로 대본 줄을 찾는다. 자막의 ' / '는 카드를 나누는 자리다."""
+    header_at = next((i for i, line in enumerate(lines) if line.strip().startswith("|")
+                      and "나레이션" in line and "자막" in line), None)
+    if header_at is None:
+        return
+    headers = [cell.strip() for cell in lines[header_at].strip().strip("|").split("|")]
+    by_no = {beat["no"]: beat for beat in beats}
+    for line in lines[header_at + 1:]:
+        if not line.strip().startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if all(SEPARATOR.match(cell) for cell in cells if cell):
+            continue
+        row = dict(zip(headers, cells))
+        number = re.search(r"(\d+)\s*번", row.get("시간", ""))
+        if not number or int(number.group(1)) not in by_no:
+            raise ValueError(f"나레이션 표의 '{row.get('시간', '')}' 줄이 대본의 몇 번 줄인지 읽지 못했습니다.")
+        beat = by_no[int(number.group(1))]
+        beat["narration"] = _column(row, "나레이션").replace("**", "").strip()
+        beat["subtitle"] = _column(row, "자막").replace("`", "").replace("**", "").strip()
 
 
 # ---------- 일반 텍스트 ----------
