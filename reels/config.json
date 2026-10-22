@@ -39,7 +39,7 @@
     "box_top_ratio": 0.24,
     "char_width_factor": 1.0,
     "max_lines": 1,
-    "max_chars": 21,
+    "max_chars": 22,
     "min_seconds": 1.0,
     "max_seconds": 2.0,
     "text_color": "#000000",

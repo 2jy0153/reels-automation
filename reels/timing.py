@@ -83,5 +83,6 @@ def windows(timeline: list[dict], bounds: list[tuple[float, float]]) -> list[dic
 
 
 def windows_for(voice_dir: Path, timeline: list[dict]) -> list[dict]:
-    bounds = [speech_bounds(voice_dir / f"{line['no']:02d}.mp3") for line in timeline]
+    # 문장 단위 타임라인은 줄마다 'file'(예: sent/03_2.mp3)을 가진다. 없으면 문단 파일(NN.mp3).
+    bounds = [speech_bounds(voice_dir / line.get("file", f"{line['no']:02d}.mp3")) for line in timeline]
     return windows(timeline, bounds)

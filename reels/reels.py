@@ -15,6 +15,7 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -377,6 +378,55 @@ def cmd_split_voice(args: argparse.Namespace) -> None:
     print(f"저장 완료: {raw_dir} (문단 {len(lines)}개). 다음은 'voice <ID> --speed 값'입니다.")
 
 
+def cmd_sentences(args: argparse.Namespace) -> None:
+    """문단별 음성(voice/raw/NN.mp3)을 문장별로 자르고, 문장 사이 쉼(0.3초, 물음표 뒤 0.6초, 마지막 뒤 없음)을 넣어 타임라인을 만든다."""
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    folder = layout["reels"] / args.reel_id
+    script_path = folder / "script" / f"{args.reel_id}.json"
+    if not script_path.exists():
+        raise SystemExit(f"대본 JSON이 없습니다: {script_path}")
+    lines = json.loads(script_path.read_text(encoding="utf-8"))["lines"]
+    voice_dir = folder / "voice"
+    raw_dir = voice_dir / "raw"
+    missing = [line["no"] for line in lines if not (raw_dir / f"{line['no']:02d}.mp3").exists()]
+    if missing:
+        raise SystemExit(f"문단 음성이 없습니다: {missing}. 먼저 split-voice 또는 voice를 실행하세요.")
+    if shutil.which("ffmpeg") is None:
+        raise SystemExit("ffmpeg가 설치되어 있지 않습니다.")
+
+    items, cuts = [], []
+    rates = []
+    for line in lines:
+        raw = raw_dir / f"{line['no']:02d}.mp3"
+        texts = timing.sentences(line["narration"])
+        try:
+            segments = voice.sentence_segments(raw, texts)
+        except ValueError as error:
+            raise SystemExit(f"{line['no']}번 문단: {error}")
+        for number, (text, (start, end)) in enumerate(zip(texts, segments), start=1):
+            chars = len(re.sub(r"\s", "", text))
+            rates.append(chars / (end - start) if end > start else 0)
+            name = f"sent/{line['no']:02d}_{number}.mp3"
+            cuts.append((raw, voice_dir / name, start, end))
+            items.append({"para": line["no"], "text": text, "file": name, "duration": end - start})
+    average = sum(rates) / len(rates)
+    print(f"문장 {len(items)}개 (문단 {len(lines)}개)")
+    for item, rate in zip(items, rates):
+        flag = "  <- 확인 필요(음성에 이 문장이 없거나 다를 수 있음)" if average and abs(rate - average) / average > 0.4 else ""
+        print(f"  {item['para']:02d}번 {item['duration']:5.2f}초 (초당 {rate:.1f}자){flag}: {item['text'][:30]}")
+    if not args.yes:
+        print("아직 아무것도 저장하지 않았습니다. 확인 후 'sentences <ID> --yes'를 실행하세요.")
+        return
+    for raw, dst, start, end in cuts:
+        voice.cut_audio(raw, dst, start, end)
+    sentences = voice.build_sentence_timeline(items, config["pause_seconds"], config["pause_after_question_seconds"])
+    paragraphs = voice.paragraph_timeline(sentences, lines)
+    payload = {"speed": 1.0, "lines": paragraphs, "sentences": sentences}
+    (voice_dir / voice.TIMELINE).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"저장 완료: {voice_dir / 'sent'} (총 길이 약 {sentences[-1]['end']}초). 다음은 'srt <ID> --color <색>'과 'assemble <ID>'입니다.")
+
+
 def cmd_srt(args: argparse.Namespace) -> None:
     config = common.load_config()
     layout = common.make_layout(common.resolve_root(config))
@@ -390,9 +440,19 @@ def cmd_srt(args: argparse.Namespace) -> None:
     out = folder / "subtitles" / f"{args.reel_id}_{args.color}.srt"
     out.parent.mkdir(parents=True, exist_ok=True)
     wins = timing.windows_for(voice_dir, timeline)
-    blocks = subtitles.cues(timeline, style, wins)
-    out.write_text(subtitles.build_srt(timeline, style, wins), encoding="utf-8")
-    print(f"자막 저장: {out} ({len(blocks)}개 블록)")
+    # 문장 단위 음성이 있으면 자막 경계를 글자 수 비율이 아니라 실제 음성의 쉼 위치에 맞춘다.
+    silences = None
+    if all("file" in item for item in timeline) and all((voice_dir / item["file"]).exists() for item in timeline):
+        silences = {item["no"]: [round(item["start"] + m, 3) for m in voice.inner_silences(voice_dir / item["file"])]
+                    for item in timeline}
+    blocks = subtitles.cues(timeline, style, wins, silences)
+    out.write_text(subtitles.build_srt(timeline, style, wins, silences), encoding="utf-8")
+    print(f"자막 저장: {out} ({len(blocks)}개 블록, 경계 기준: {'음성 쉼 위치' if silences else '글자 수 비율'})")
+    over = [(end - start, text) for start, end, text in blocks if end - start < 1.0 or end - start > 3.0 or len(text.replace(' ', '')) > style.get("max_chars", 10**9)]
+    if over:
+        print(f"확인 필요: 1초 미만, 3초 초과 또는 {style.get('max_chars')}자 초과 자막 {len(over)}개")
+        for seconds, text in over[:8]:
+            print(f"  - {seconds:.1f}초 {text}")
     box_limit = style["box_max_width"]
     estimated = {text: len(text) * style["font_size"] * style["char_width_factor"] for _, _, text in blocks}
     too_wide = [text for text, width in estimated.items() if width > box_limit]
@@ -404,8 +464,8 @@ def cmd_srt(args: argparse.Namespace) -> None:
     print(f"프리미어 캡션 스타일 이름: 자막_{args.color}")
     print("프리미어 체크리스트:")
     print("  - 자막_" + args.color + " 스타일이 없으면 한 번 만들어 저장해 두고 적용")
-    print("  - 박스 윗변을 화면 높이 27%(y=518px)에 맞추고, 가로 가운데 정렬")
-    print("  - 글꼴 Apple SD Gothic Neo SemiBold, 크기 72, 글자 색 #111111, 자간 -3%에서 시작해 눈으로 조정")
+    print(f"  - 박스 윗변을 프리미어 세로 {style['box_top_premiere_y']}에 맞추고, 가로 가운데 정렬")
+    print(f"  - 글꼴 {style['font']}, 크기 {style['font_size']}, 글자 색 {style['text_color']}, 자간 {style['tracking']}")
     print("  - 메뉴 이름·패딩 분리 가능 여부는 프리미어 버전별로 확인, 안 되면 .mogrt 템플릿")
     print("  - 자막 작업은 맥에서만 (Apple SD Gothic Neo는 맥 전용)")
 
@@ -518,7 +578,11 @@ def cmd_assemble(args: argparse.Namespace) -> None:
             raise SystemExit(f"파일이 없습니다: {required}")
     timeline = json.loads(timeline_path.read_text(encoding="utf-8"))["lines"]
     plan = assemble.load_plan(plan_path)
-    narration = [str(folder / "voice" / f"{line['no']:02d}.mp3") for line in timeline]
+    sentence_items = json.loads(timeline_path.read_text(encoding="utf-8")).get("sentences")
+    if sentence_items:
+        narration = [str(folder / "voice" / item["file"]) for item in sentence_items]
+    else:
+        narration = [str(folder / "voice" / f"{line['no']:02d}.mp3") for line in timeline]
     missing_audio = [path for path in narration if not Path(path).exists()]
     if missing_audio:
         raise SystemExit(f"음성 파일이 없습니다: {missing_audio[0]} 외 {len(missing_audio) - 1}개")
@@ -542,7 +606,8 @@ def cmd_assemble(args: argparse.Namespace) -> None:
     pieces, notes = assemble.video_pieces(timeline, plan, wins, clip_info)
     source_frames = {clip: round(info["length"] * assemble.FPS) for clip, info in clip_info.items()}
     xml = assemble.build_xmeml(args.reel_id, timeline, pieces, narration, source_frames, media,
-                               assemble.WIDTH, assemble.HEIGHT)
+                               assemble.WIDTH, assemble.HEIGHT,
+                               audio_timeline=sentence_items or None, audio_files=narration if sentence_items else None)
     out = folder / "project" / f"{args.reel_id}.xml"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(xml, encoding="utf-8")
@@ -681,6 +746,11 @@ def main() -> None:
     split_p.add_argument("--yes", action="store_true", help="확인 후 실제로 저장")
     split_p.add_argument("--force", action="store_true", help="raw 폴더의 기존 음성을 덮어씀")
     split_p.set_defaults(func=cmd_split_voice)
+
+    sentences_p = sub.add_parser("sentences", help="문단 음성을 문장별로 자르고 문장 사이 쉼(0.3초/물음표 0.6초)을 넣은 타임라인 만들기")
+    sentences_p.add_argument("reel_id")
+    sentences_p.add_argument("--yes", action="store_true", help="확인 후 실제로 저장")
+    sentences_p.set_defaults(func=cmd_sentences)
 
     srt_p = sub.add_parser("srt", help="타임라인으로 자막(SRT) 만들기")
     srt_p.add_argument("reel_id")

@@ -84,8 +84,10 @@ def scale_filter(percent: float) -> str:
 
 def build_xmeml(name: str, timeline: list[dict], pieces: list[dict], narration_files: list[str],
                 source_frames: dict[str, int], media: dict[str, dict] | None = None,
-                width: int = 1080, height: int = 1920) -> str:
-    """media: 영상 파일 경로 → {"width", "height", "scale"}. 없으면 화면 크기에 맞춘다고 보고 확대율 100%."""
+                width: int = 1080, height: int = 1920,
+                audio_timeline: list[dict] | None = None, audio_files: list[str] | None = None) -> str:
+    """media: 영상 파일 경로 → {"width", "height", "scale"}. 없으면 화면 크기에 맞춘다고 보고 확대율 100%.
+    audio_timeline/audio_files: 문장 단위 음성 클립. 없으면 문단(timeline)마다 음성 하나를 둔다."""
     total_frames = to_frames(timeline[-1]["end"])
     file_ids: dict[str, str] = {}
     media = media or {}
@@ -116,7 +118,7 @@ def build_xmeml(name: str, timeline: list[dict], pieces: list[dict], narration_f
         )
 
     audio_items = []
-    for number, (line, path) in enumerate(zip(timeline, narration_files), start=1):
+    for number, (line, path) in enumerate(zip(audio_timeline or timeline, audio_files or narration_files), start=1):
         length = line["end"] - line["start"]
         audio_items.append(
             f'<clipitem id="a{number}"><name>{escape(Path(path).name)}</name>'

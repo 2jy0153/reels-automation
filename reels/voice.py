@@ -196,3 +196,65 @@ def silence_points(path: Path, noise_db: int, min_silence: float) -> tuple[list[
     starts = [float(value) for value in re.findall(r"silence_start: ([\d.]+)", result.stderr)]
     ends = [float(value) for value in re.findall(r"silence_end: ([\d.]+)", result.stderr)]
     return starts, ends
+
+
+INNER_SILENCE_DB = -33
+INNER_SILENCE_SECONDS = 0.06
+EDGE_MARGIN = 0.12
+
+
+def inner_silences(path: Path, noise_db: int = INNER_SILENCE_DB, min_silence: float = INNER_SILENCE_SECONDS) -> list[float]:
+    """문장 음성 안에서 쉼이 있는 지점(무음 구간의 가운데, 파일 시작 기준 초). 자막 경계를 실제 음성에 맞출 때 쓴다."""
+    starts, ends = silence_points(path, noise_db, min_silence)
+    total = duration(path)
+    return [round((a + b) / 2, 3) for a, b in zip(starts, ends) if EDGE_MARGIN < (a + b) / 2 < total - EDGE_MARGIN]
+
+
+def sentence_segments(path: Path, texts: list[str]) -> list[tuple[float, float]]:
+    """문단 음성 하나를 문장 수만큼 나눈 (시작, 끝) 목록. 무음이 모자라면 더 짧은 무음까지 찾아 보고, 그래도 모자라면 ValueError."""
+    import re
+
+    total = duration(path)
+    if len(texts) == 1:
+        return [(0.0, total)]
+    counts = [len(re.sub(r"\s", "", text)) for text in texts]
+    error = None
+    for minimum in (SILENCE_SECONDS, 0.15, 0.08):
+        silences = detect_silences(path, SILENCE_DB, minimum)
+        try:
+            return segments_from_cuts(total, choose_cuts_by_text(silences, total, counts))
+        except ValueError as exc:
+            error = exc
+    raise ValueError(str(error))
+
+
+def build_sentence_timeline(items: list[dict], pause: float, pause_after_question: float) -> list[dict]:
+    """items: [{"para", "text", "file", "duration"}]. 문장을 순서대로 놓고 문장 사이에 쉼을 둔다.
+    쉼은 일반 문장 뒤 pause, 물음표로 끝나는 문장 뒤 pause_after_question, 마지막 문장 뒤에는 없다."""
+    timeline = []
+    cursor = 0.0
+    for index, item in enumerate(items):
+        start = round(cursor, 3)
+        end = round(start + item["duration"], 3)
+        gap = 0.0 if index == len(items) - 1 else pause_after(item["text"], pause, pause_after_question)
+        timeline.append({
+            "no": index + 1, "para": item["para"], "start": start, "end": end,
+            "duration": round(item["duration"], 3), "pause_after": gap,
+            "narration": item["text"], "subtitle": None, "file": item["file"],
+        })
+        cursor = end + gap
+    return timeline
+
+
+def paragraph_timeline(sentences: list[dict], lines: list[dict]) -> list[dict]:
+    """문장 타임라인을 문단 단위로 묶는다. 영상 계획과 편집은 문단 단위로 쓴다."""
+    result = []
+    for line in lines:
+        mine = [item for item in sentences if item["para"] == line["no"]]
+        result.append({
+            "no": line["no"], "start": mine[0]["start"], "end": mine[-1]["end"],
+            "duration": round(mine[-1]["end"] - mine[0]["start"], 3),
+            "pause_after": mine[-1]["pause_after"], "narration": line["narration"],
+            "subtitle": line.get("subtitle"), "file": mine[0]["file"],
+        })
+    return result
