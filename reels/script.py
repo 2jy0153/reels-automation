@@ -11,7 +11,7 @@
 
 import re
 
-TIME_RANGE = re.compile(r"(\d+)\s*~\s*(\d+)\s*초")
+TIME_RANGE = re.compile(r"(\d+(?:\.\d+)?)\s*~\s*(\d+(?:\.\d+)?)\s*초")
 SEPARATOR = re.compile(r"^:?-{3,}:?$")
 HASHTAG_LINE = re.compile(r"(#\S+\s*)+")
 PLAIN_TIME = re.compile(r"^\s*\[?\s*(\d{1,3})\s*[~\-–]\s*(\d{1,3})\s*(?:초|s)?\s*\]?\s*[:：]?\s*(.*)$")
@@ -23,9 +23,10 @@ NARRATION_LABEL = re.compile(r"^\s*대사\s*[:：]\s*(.*)$")
 CHARS_PER_SECOND = 6  # 일반 텍스트에 시간 표시가 없을 때 쓰는 예상 말 속도
 
 
-def parse_script(text: str, reel_id: str) -> dict:
+def parse_script(text: str, reel_id: str, table: int | None = None) -> dict:
+    """table: 대본 표가 여러 개(A안/B안 등)일 때 몇 번째 표를 쓸지 (1부터)."""
     lines = text.splitlines()
-    rows = _table_rows(lines)
+    rows = _table_rows(lines, table)
     if rows:
         return _from_table(lines, rows, reel_id)
     return _from_plain(lines, reel_id)
@@ -33,13 +34,20 @@ def parse_script(text: str, reel_id: str) -> dict:
 
 # ---------- 표 형식 ----------
 
-def _table_rows(lines: list[str]) -> list[dict]:
-    header_at = next(
-        (i for i, line in enumerate(lines) if line.strip().startswith("|") and "시간" in line and "대사" in line),
-        None,
-    )
-    if header_at is None:
+def script_tables(lines: list[str]) -> list[int]:
+    """'시간'과 '대사' 열이 있는 표의 머리줄 위치들."""
+    return [i for i, line in enumerate(lines) if line.strip().startswith("|") and "시간" in line and "대사" in line]
+
+
+def _table_rows(lines: list[str], table: int | None = None) -> list[dict]:
+    headers_at = script_tables(lines)
+    if not headers_at:
         return []
+    if table is None and len(headers_at) > 1:
+        raise ValueError(f"대본 표가 {len(headers_at)}개 있습니다. 컨펌한 표 번호를 --table로 정해 주세요 (1~{len(headers_at)}).")
+    if table is not None and not 1 <= table <= len(headers_at):
+        raise ValueError(f"대본 표는 {len(headers_at)}개입니다. --table {table}은 없습니다.")
+    header_at = headers_at[(table or 1) - 1]
     headers = [cell.strip() for cell in lines[header_at].strip().strip("|").split("|")]
     rows = []
     for line in lines[header_at + 1:]:
@@ -50,6 +58,26 @@ def _table_rows(lines: list[str]) -> list[dict]:
             continue  # |---|---| 구분선
         rows.append(dict(zip(headers, cells)))
     return rows
+
+
+def _seconds(text: str) -> int | float:
+    value = float(text)
+    return int(value) if value.is_integer() else value
+
+
+def _visual(row: dict) -> str:
+    # 예전 대본은 '화면', v3 대본은 '장면' 열을 쓴다.
+    if "화면" in row:
+        return row["화면"]
+    return _column(row, "장면")
+
+
+def _narration(row: dict) -> str:
+    # '자막 (= 목소리를 넣는다면 대사)'처럼 이름에 '대사'가 들어간 열도 대사로 읽는다.
+    if "대사" in row:
+        return row["대사"]
+    key = next((k for k in row if "대사" in k), None)
+    return row[key] if key else ""
 
 
 def _column(row: dict, prefix: str) -> str:
@@ -67,13 +95,38 @@ def _from_table(lines: list[str], rows: list[dict], reel_id: str) -> dict:
         caption = _column(row, "화면 자막").replace("<br>", " / ").strip()
         beats.append({
             "no": number,
-            "target_start": int(match.group(1)),
-            "target_end": int(match.group(2)),
-            "visual": row.get("화면", "").strip(),
-            "narration": row.get("대사", "").replace("**", "").strip(),
+            "target_start": _seconds(match.group(1)),
+            "target_end": _seconds(match.group(2)),
+            "visual": _visual(row).replace("**", "").strip(),
+            "narration": _narration(row).replace("**", "").strip(),
             "caption": None if not caption or caption.startswith("(자막 없음") else caption,
         })
+    _apply_voice_split(lines, beats)
     return _build(reel_id, lines, beats, timing_estimated=False)
+
+
+def _apply_voice_split(lines: list[str], beats: list[dict]) -> None:
+    """'나레이션 | 자막' 표가 있으면 그 줄은 말(narration)과 자막(subtitle)을 따로 쓴다.
+    시간 칸의 'N번'으로 대본 줄을 찾는다. 자막의 ' / '는 카드를 나누는 자리다."""
+    header_at = next((i for i, line in enumerate(lines) if line.strip().startswith("|")
+                      and "나레이션" in line and "자막" in line), None)
+    if header_at is None:
+        return
+    headers = [cell.strip() for cell in lines[header_at].strip().strip("|").split("|")]
+    by_no = {beat["no"]: beat for beat in beats}
+    for line in lines[header_at + 1:]:
+        if not line.strip().startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if all(SEPARATOR.match(cell) for cell in cells if cell):
+            continue
+        row = dict(zip(headers, cells))
+        number = re.search(r"(\d+)\s*번", row.get("시간", ""))
+        if not number or int(number.group(1)) not in by_no:
+            raise ValueError(f"나레이션 표의 '{row.get('시간', '')}' 줄이 대본의 몇 번 줄인지 읽지 못했습니다.")
+        beat = by_no[int(number.group(1))]
+        beat["narration"] = _column(row, "나레이션").replace("**", "").strip()
+        beat["subtitle"] = _column(row, "자막").replace("`", "").replace("**", "").strip()
 
 
 # ---------- 일반 텍스트 ----------

@@ -6,6 +6,7 @@
   organize --yes              위 계획대로 실제로 옮긴다 (중복·빈 폴더는 건드리지 않음)
   script import <파일>         대본(.md/.txt)을 대본 JSON으로 바꾸고 검사한다
   script check <JSON 파일>     대본 JSON을 다시 검사한다
+  handoff <기획 문서> --id <ID> 컨펌·빈칸을 확인하고 통과하면 대본 JSON과 촬영 체크리스트를 만든다
   proxy                       LIBRARY/VIDEO 영상의 720p 분석용 사본을 PROXY에 만든다 (있으면 건너뜀)
   log [--limit N]             영상(사본 우선)을 Gemini로 분석해 태그를 저장한다 (태깅 안 된 것만)
   check                       Gemini 모델이 동작하는지 확인한다
@@ -25,6 +26,7 @@ sys.path.insert(0, str(HERE))
 import backup  # noqa: E402
 import clip_index  # noqa: E402
 import edit_plan  # noqa: E402
+import handoff  # noqa: E402
 import assemble  # noqa: E402
 import media_info  # noqa: E402
 import common  # noqa: E402
@@ -117,6 +119,47 @@ def cmd_script_import(args: argparse.Namespace) -> None:
     print(f"  줄 {len(data['lines'])}개, 총 {data['length_seconds']}초, 해시태그 {len(data['hashtags'])}개")
     errors, warnings = script.check_script(data)
     print_script_report(errors, warnings)
+
+
+def cmd_handoff(args: argparse.Namespace) -> None:
+    source = Path(args.file).expanduser()
+    text = source.read_text(encoding="utf-8")
+    try:
+        data = script.parse_script(text, args.id, args.table)
+    except ValueError as error:
+        raise SystemExit(f"중단: {error}")
+    found = handoff.problems(text, data)
+    if found:
+        print("제작으로 넘기지 않았습니다. 아래를 먼저 해결해 주세요.")
+        for message in found:
+            print(f"  [멈춤] {message}")
+        raise SystemExit(1)
+    errors, warnings = script.check_script(data)
+    print(f"확인 통과: 줄 {len(data['lines'])}개, 총 {data['length_seconds']}초")
+    print_script_report(errors, warnings)
+    if errors:
+        raise SystemExit(1)
+    if args.check:
+        return
+
+    config = common.load_config()
+    layout = common.make_layout(common.resolve_root(config))
+    data["source_file"] = source.name
+    folder = common.make_reel_folder(layout["reels"], args.id)
+    (folder / "script" / source.name).write_bytes(source.read_bytes())  # 원본 기획 문서 보관
+    json_path = folder / "script" / f"{args.id}.json"
+    json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    shots_path = folder / "script" / "shotlist.md"
+    shots_path.write_text(handoff.shot_checklist(data), encoding="utf-8")
+    voice_path = folder / "script" / "voice.txt"
+    voice_path.write_text(handoff.voice_script(data), encoding="utf-8")
+    print(f"대본 JSON 생성: {json_path}")
+    print(f"촬영 체크리스트: {shots_path}")
+    print(f"음성 대본: {voice_path}")
+    split = [line["no"] for line in data["lines"] if line.get("subtitle")]
+    if split:
+        print(f"말과 자막을 따로 쓰는 줄: {', '.join(map(str, split))}번")
+    print(f"다음: 음성은 'voice {args.id}'로 확인 후 --yes, 자막은 주제 색을 물어본 뒤 'srt {args.id} --color <색>'")
 
 
 def cmd_script_check(args: argparse.Namespace) -> None:
@@ -604,6 +647,13 @@ def main() -> None:
     check_p = script_sub.add_parser("check", help="대본 JSON 검사")
     check_p.add_argument("file")
     check_p.set_defaults(func=cmd_script_check)
+
+    handoff_p = sub.add_parser("handoff", help="컨펌된 기획 문서를 확인하고 제작 폴더로 넘기기")
+    handoff_p.add_argument("file")
+    handoff_p.add_argument("--id", required=True, help="릴스 ID (예: 20261022_stand_01)")
+    handoff_p.add_argument("--table", type=int, help="대본 표가 여러 개일 때 컨펌한 표 번호 (1부터)")
+    handoff_p.add_argument("--check", action="store_true", help="확인만 하고 파일은 만들지 않음 (SSD 없이 가능)")
+    handoff_p.set_defaults(func=cmd_handoff)
 
     organize_p = sub.add_parser("organize", help="LIBRARY 기존 파일을 종류·날짜별 구조로 정리")
     organize_p.add_argument("--yes", action="store_true", help="확인 후 실제로 옮김")

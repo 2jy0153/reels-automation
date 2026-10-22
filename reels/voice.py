@@ -82,6 +82,7 @@ def build_timeline(lines: list[dict], durations: list[float], pause: float, paus
             "duration": round(length, 3),
             "pause_after": gap,
             "narration": line["narration"],
+            "subtitle": line.get("subtitle"),
         })
         cursor = end + gap
     return timeline

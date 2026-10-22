@@ -8,3 +8,11 @@
 - 답이 오기 전에는 SRT를 만들지 않는다.
 - 색이 정해지면 `srt <ID> --color <색>`으로 만든다. 색 없이는 실행되지 않는다.
 - 결과 파일은 `subtitles/<ID>_<색>.srt`다.
+
+## 컨펌된 기획 넘겨받기
+
+`confirmed/` 폴더에 기획 문서가 올라오면 `reels/README.md`의 "기획 컨펌 → 제작 넘기기"를 따른다.
+
+- `python3 reels/reels.py handoff confirmed/<ID>.md --id <ID>`로 넘겨받는다. 멈춤이 나오면 그 내용을 사용자에게 그대로 알리고 다음 단계로 가지 않는다.
+- 빈칸을 Claude가 추측해서 채우지 않는다.
+- 음성(voice --yes)은 크레딧이 들므로 사용자가 "시작해"라고 한 뒤에 실행한다.

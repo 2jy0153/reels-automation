@@ -128,6 +128,14 @@ def cues(timeline: list[dict], style: dict, wins: list[dict]) -> list[tuple[floa
     블록 길이는 1~2초에 맞춘다(_fit_durations)."""
     result = []
     for item, win in zip(timeline, wins):
+        if item.get("subtitle"):
+            # 말과 자막을 따로 정한 줄은 자막 칸을 쓴다. ' / '는 카드 나눔이라 카드끼리는 합치지 않는다.
+            cards = [card.strip() for card in item["subtitle"].split(" / ") if card.strip()]
+            for (start, end), card in zip(timing.spread(cards, *win["caption"]), cards):
+                texts = _cue_texts(card, style)
+                result.extend(_fit_durations(
+                    [(s, e, t) for (s, e), t in zip(timing.spread(texts, start, end), texts)], style))
+            continue
         texts = _cue_texts(item["narration"], style)
         line_cues = [(s, e, t) for (s, e), t in zip(timing.spread(texts, *win["caption"]), texts)]
         result.extend(_fit_durations(line_cues, style))
