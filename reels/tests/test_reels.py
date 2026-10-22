@@ -395,8 +395,7 @@ class SubtitleTests(unittest.TestCase):
         self.assertGreater(len(items), 1)
         for start, end, text in items:
             self.assertLessEqual(len(text.replace(" ", "")), 40)
-            self.assertLessEqual(end - start, 2.0 + 1e-6)  # 자막 하나는 최대 2초
-            self.assertLess(start, end)
+            self.assertLess(start, end)  # 2초는 목표일 뿐이라 길이로 나누지 않는다
         self.assertEqual(items[0][0], 0.0)
         self.assertEqual(items[-1][1], 9.0)
 
@@ -609,18 +608,13 @@ class SubtitleFitTests(unittest.TestCase):
     STYLE_72 = {"font_size": 44, "frame_width": 1080, "side_margin": 80, "char_width_factor": 1.0,
                 "max_lines": 1, "max_chars": 21, "min_seconds": 1.0, "max_seconds": 2.0}
 
-    def test_block_longer_than_two_seconds_is_split_at_word_boundary(self):
+    def test_block_longer_than_two_seconds_is_not_split_for_duration(self):
         import subtitles as subtitles_mod
 
         timeline = [{"no": 1, "start": 0.0, "end": 6.0, "narration": "크로스백 메고 다니다가 담 걸려본 적 있으세요?"}]
-        wins = [{"caption": (0.0, 6.0)}]
-        items = subtitles_mod.cues(timeline, self.STYLE_72, wins)
-        self.assertGreaterEqual(len(items), 3)
-        for start, end, text in items:
-            self.assertLessEqual(end - start, 2.0 + 1e-6)
-            self.assertLessEqual(len(text.replace(" ", "")), 21)
-        self.assertEqual(items[0][0], 0.0)
-        self.assertEqual(items[-1][1], 6.0)
+        items = subtitles_mod.cues(timeline, self.STYLE_72, [{"caption": (0.0, 6.0)}])
+        self.assertEqual([t for _, _, t in items], ["크로스백 메고 다니다가 담 걸려본 적 있으세요?"])
+        self.assertEqual((items[0][0], items[0][1]), (0.0, 6.0))
 
     def test_short_block_under_one_second_joins_its_neighbour(self):
         import subtitles as subtitles_mod
@@ -636,6 +630,56 @@ class SubtitleFitTests(unittest.TestCase):
         self.assertEqual(subtitles_mod.COLORS["그린"][0], "#AEFFCA")
         self.assertEqual(subtitles_mod.COLORS["오렌지"][0], "#FFB56E")
         self.assertEqual(subtitles_mod.COLORS["노랑"][0], "#FFEB6B")
+
+
+class SubtitleMeaningTests(unittest.TestCase):
+    STYLE = {"max_chars": 22, "max_lines": 1, "min_seconds": 1.0}
+
+    def test_short_sentence_is_never_split_and_sentences_never_merge_across_a_period(self):
+        import subtitles as subtitles_mod
+
+        texts = subtitles_mod._cue_texts("20대 땐 백팩은 학생용이라고 생각했어요. 서른 넘으면 명품백 들고 다닐 줄 알았는데,", self.STYLE)
+        self.assertEqual(texts, ["20대 땐 백팩은 학생용이라고 생각했어요.", "서른 넘으면 명품백 들고 다닐 줄 알았는데,"])
+
+    def test_long_sentence_splits_after_connective_and_not_before_negation(self):
+        import subtitles as subtitles_mod
+
+        texts = subtitles_mod._cue_texts("숄더백은 손으로 잡고 있지 않으면 자꾸 흘러내리거든요.", dict(self.STYLE, max_chars=20))
+        self.assertEqual(texts, ["숄더백은 손으로 잡고 있지 않으면", "자꾸 흘러내리거든요."])
+        texts = subtitles_mod._cue_texts("근데 백팩은 편한 대신 미팅 있는 날엔 아직 애매하더라고요.", self.STYLE)
+        self.assertEqual(texts, ["근데 백팩은 편한 대신", "미팅 있는 날엔 아직 애매하더라고요."])
+
+    def test_boundary_snaps_to_the_real_pause_in_the_audio(self):
+        import subtitles as subtitles_mod
+
+        # 글자 수 비율이면 3.0초에서 나뉘지만 실제 쉼은 2.6초 근처다
+        spans = [(0.0, 3.0), (3.0, 6.0)]
+        self.assertEqual(subtitles_mod.snap_to_silences(spans, [2.6], (0.0, 6.0)), [(0.0, 2.6), (2.6, 6.0)])
+        # 가까운 쉼이 없으면 글자 수 비율 그대로
+        self.assertEqual(subtitles_mod.snap_to_silences(spans, [0.5], (0.0, 6.0)), spans)
+
+    def test_cues_use_silences_when_given(self):
+        import subtitles as subtitles_mod
+
+        timeline = [{"no": 1, "start": 0.0, "end": 6.0,
+                     "narration": "예전엔 한쪽 어깨만 아팠는데, 이제는 허리까지 아프더라고요."}]
+        items = subtitles_mod.cues(timeline, self.STYLE, [{"caption": (0.0, 6.0)}], {1: [3.3]})
+        self.assertEqual([(a, b) for a, b, _ in items], [(0.0, 3.3), (3.3, 6.0)])
+
+
+class SentenceTimelineTests(unittest.TestCase):
+    def test_pause_after_each_sentence_is_0_3_and_0_6_after_a_question_and_none_at_the_end(self):
+        import voice
+
+        items = [{"para": 1, "text": "가나다?", "file": "sent/01_1.mp3", "duration": 2.0},
+                 {"para": 1, "text": "라마바.", "file": "sent/01_2.mp3", "duration": 1.0},
+                 {"para": 2, "text": "사아자.", "file": "sent/02_1.mp3", "duration": 1.5}]
+        timeline = voice.build_sentence_timeline(items, 0.3, 0.6)
+        self.assertEqual([(t["start"], t["end"], t["pause_after"]) for t in timeline],
+                         [(0.0, 2.0, 0.6), (2.6, 3.6, 0.3), (3.9, 5.4, 0.0)])
+        paragraphs = voice.paragraph_timeline(timeline, [{"no": 1, "narration": "가나다? 라마바."}, {"no": 2, "narration": "사아자."}])
+        self.assertEqual((paragraphs[0]["start"], paragraphs[0]["end"]), (0.0, 3.6))
+        self.assertEqual((paragraphs[1]["start"], paragraphs[1]["end"]), (3.9, 5.4))
 
 
 class SubtitleSheetTests(unittest.TestCase):
