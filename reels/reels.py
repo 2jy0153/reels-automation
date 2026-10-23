@@ -404,10 +404,9 @@ def cmd_srt(args: argparse.Namespace) -> None:
     print(f"프리미어 캡션 스타일 이름: 자막_{args.color}")
     print("프리미어 체크리스트:")
     print("  - 자막_" + args.color + " 스타일이 없으면 한 번 만들어 저장해 두고 적용")
-    print("  - 박스 윗변을 화면 높이 27%(y=518px)에 맞추고, 가로 가운데 정렬")
-    print("  - 글꼴 Apple SD Gothic Neo SemiBold, 크기 72, 글자 색 #111111, 자간 -3%에서 시작해 눈으로 조정")
+    print("  - 위치: 위에서 Y 390, 가로 가운데 정렬, 배경 크기 30, 불투명도 100")
+    print("  - 글꼴 프리젠테이션VF 6 SemiBold, 크기 50, 자간 -30, 글자 색 검정, 배경색은 주제 색")
     print("  - 메뉴 이름·패딩 분리 가능 여부는 프리미어 버전별로 확인, 안 되면 .mogrt 템플릿")
-    print("  - 자막 작업은 맥에서만 (Apple SD Gothic Neo는 맥 전용)")
 
 
 def cmd_orient(args: argparse.Namespace) -> None:
